@@ -1,0 +1,36 @@
+{
+  "name": "Article Validation Trigger",
+  "description": "Adds a Validation Trigger button as a custom field. Clicking it posts the entry payload to a configurable webhook, then polls a status lookup URL by entry ID until the validation agent's feedback is available.",
+  "icon": "https://www.contentstack.com/favicon.ico",
+  "visibility": "private",
+  "target_type": "stack",
+  "ui_location": {
+    "locations": [
+      {
+        "type": "cs.cm.stack.custom_field",
+        "meta": [
+          {
+            "path": "/index.html",
+            "signed": true,
+            "enabled": true,
+            "name": "Validation Trigger",
+            "extension_uid": "",
+            "field_data_type": ["text", "json"],
+            "multiple": false,
+            "config": {
+              "url": "",
+              "statusUrl": "",
+              "api_key": "",
+              "authorization": ""
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "webhook": null,
+  "hosting": {
+    "type": "launch",
+    "launch_uid": ""
+  }
+}
