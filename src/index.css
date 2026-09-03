@@ -10,6 +10,7 @@
   --cs-green-bg: #e9f9f1;
   --cs-red: #d0392b;
   --cs-red-bg: #fdecea;
+  --cs-amber: #b7791f;
 }
 
 @keyframes cs-spin {
@@ -190,6 +191,10 @@ body {
   color: var(--cs-gray-600);
 }
 
+.cs-finding__icon--incomplete {
+  color: var(--cs-amber);
+}
+
 .cs-finding__body {
   min-width: 0;
 }
@@ -200,6 +205,10 @@ body {
 
 .cs-finding--fail .cs-finding__label {
   color: var(--cs-red);
+}
+
+.cs-finding--incomplete .cs-finding__label {
+  color: var(--cs-amber);
 }
 
 .cs-finding__detail {

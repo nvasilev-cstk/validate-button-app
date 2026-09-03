@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CustomFieldLocation } from '../App';
-import { VALIDATION_CATEGORIES, parseValidationConfig, resolvePath, valuesDiffer } from '../lib/validationConfig';
+import {
+  VALIDATION_CATEGORIES,
+  isCategoryFilledOut,
+  parseValidationConfig,
+  resolvePath,
+  valuesDiffer,
+} from '../lib/validationConfig';
 import {
   buildManagementHeaders,
   extractFeedbackByField,
@@ -17,7 +23,7 @@ export type CategoryState = 'idle' | 'pending' | 'error';
 // about with several categories potentially triggered at different times,
 // at the cost of a category's first check landing anywhere from ~0-10s after
 // it was queued rather than a fixed delay.
-const POLL_INTERVAL_MS = 10_000;
+const POLL_INTERVAL_MS = 5_000;
 const MAX_POLL_ATTEMPTS = 18;
 const FIELD_CHANGE_DEBOUNCE_MS = 1500;
 const CATEGORY_ERROR_RESET_MS = 8000;
@@ -179,6 +185,27 @@ export function useValidation(customField: CustomFieldLocation) {
     });
   }, []);
 
+  // A category whose configured fields are empty is shown a local "needs to
+  // be filled out" message instead of being sent for validation at all — no
+  // network call, no waiting/polling for it.
+  const showIncompleteMessage = useCallback((categoryKey: string) => {
+    const def = VALIDATION_CATEGORIES.find((c) => c.key === categoryKey);
+    if (!def) return;
+    setFeedback((prev) => ({
+      ...prev,
+      [def.feedbackFieldUid]: {
+        group: def.label,
+        findings: [
+          {
+            status: 'incomplete',
+            label: `${def.label} needs to be filled out before it can be validated.`,
+          },
+        ],
+      },
+    }));
+    setCategoryState((prev) => ({ ...prev, [categoryKey]: 'idle' }));
+  }, []);
+
   const triggerAll = useCallback(async () => {
     if (!hasSavedEntry) {
       setGlobalError('Save this entry before running validation.');
@@ -190,10 +217,25 @@ export function useValidation(customField: CustomFieldLocation) {
     }
 
     setGlobalError('');
+
+    const entryData = buildEntryPayload();
+    const readyCategories: string[] = [];
+    for (const def of VALIDATION_CATEGORIES) {
+      if (isCategoryFilledOut(entryData, config.categoryFieldPaths[def.key] ?? [])) {
+        readyCategories.push(def.key);
+      } else {
+        showIncompleteMessage(def.key);
+      }
+    }
+
+    // Nothing ready to validate — skip the network call entirely rather
+    // than asking the orchestrator to check fields we already know are empty.
+    if (readyCategories.length === 0) return;
+
     setIsTriggeringAll(true);
 
     try {
-      await postEntryForValidation(config.triggerUrl, buildEntryPayload());
+      await postEntryForValidation(config.triggerUrl, entryData);
     } catch (err) {
       if (isMounted.current) {
         setIsTriggeringAll(false);
@@ -204,19 +246,25 @@ export function useValidation(customField: CustomFieldLocation) {
 
     if (!isMounted.current) return;
     setIsTriggeringAll(false);
-    markPending(VALIDATION_CATEGORIES.map((def) => def.key));
+    markPending(readyCategories);
     startPollingIfNeeded();
-  }, [hasSavedEntry, config, buildEntryPayload, markPending, startPollingIfNeeded]);
+  }, [hasSavedEntry, config, buildEntryPayload, showIncompleteMessage, markPending, startPollingIfNeeded]);
 
   const triggerCategory = useCallback(
     async (categoryKey: string) => {
       const url = config.categoryUrls[categoryKey];
       if (!hasSavedEntry || !url) return;
 
+      const entryData = buildEntryPayload();
+      if (!isCategoryFilledOut(entryData, config.categoryFieldPaths[categoryKey] ?? [])) {
+        showIncompleteMessage(categoryKey);
+        return;
+      }
+
       markPending([categoryKey]);
 
       try {
-        await postEntryForValidation(url, buildEntryPayload());
+        await postEntryForValidation(url, entryData);
       } catch (err) {
         console.error(`[Validation] Failed to auto-trigger "${categoryKey}"`, err);
         if (isMounted.current) {
@@ -228,7 +276,7 @@ export function useValidation(customField: CustomFieldLocation) {
 
       startPollingIfNeeded();
     },
-    [config, hasSavedEntry, buildEntryPayload, markPending, startPollingIfNeeded]
+    [config, hasSavedEntry, buildEntryPayload, showIncompleteMessage, markPending, startPollingIfNeeded]
   );
 
   // Keeps liveFieldOverridesRef in sync with live edits on every change, and

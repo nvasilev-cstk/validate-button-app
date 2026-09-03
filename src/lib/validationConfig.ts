@@ -34,6 +34,8 @@ export interface ValidationConfig {
   categoryUrls: Record<string, string>;
   /** entry field path -> the category it belongs to, for the auto-trigger-on-edit watcher */
   fieldPathToCategory: Map<string, string>;
+  /** category key -> its configured field paths, for the "is this category filled out" check */
+  categoryFieldPaths: Record<string, string[]>;
 }
 
 // validation_fields entries are field *paths*, not just top-level uids —
@@ -69,6 +71,7 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
 
   const categoryUrls: Record<string, string> = {};
   const fieldPathToCategory = new Map<string, string>();
+  const categoryFieldPaths: Record<string, string[]> = {};
 
   for (const def of VALIDATION_CATEGORIES) {
     const url = validationUrls[def.urlConfigKey];
@@ -76,7 +79,9 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
       categoryUrls[def.key] = url;
     }
 
-    for (const path of normalizeFieldPathList(validationFields[def.fieldsConfigKey])) {
+    const paths = normalizeFieldPathList(validationFields[def.fieldsConfigKey]);
+    categoryFieldPaths[def.key] = paths;
+    for (const path of paths) {
       fieldPathToCategory.set(path, def.key);
     }
   }
@@ -88,6 +93,7 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
     authorization: (cfg.authorization as string | undefined) ?? '',
     categoryUrls,
     fieldPathToCategory,
+    categoryFieldPaths,
   };
 }
 
@@ -126,6 +132,52 @@ function resolveSegments(obj: unknown, segments: PathSegment[]): unknown[] {
 // empty array if any segment along the way is missing.
 export function resolvePath(obj: unknown, path: string): unknown[] {
   return resolveSegments(obj, parsePath(path));
+}
+
+// Decides whether a resolved field value counts as "filled out". Field
+// values come in a few different shapes depending on field type, so this
+// isn't a single generic rule:
+//   - string: empty if blank after trimming.
+//   - number/boolean: never empty — 0 and false are real, set values.
+//   - array: empty if there are no items, or every item is itself empty
+//     (handles both a plain array field and a resolvePath `[]` result).
+//   - object shaped like a reference/embedded-item stub ({ uid, ... }, no
+//     `children`/`type`): empty iff its uid is blank — the uid *is* the
+//     meaningful value there, unlike in a JSON RTE node (see below).
+//   - object with a `children` or `text` key (a JSON RTE — Advanced — node):
+//     its real content lives there, not in the structural `type`/`uid`/
+//     `attrs`/`_version` wrapper keys, so recurse into `children`/`text`
+//     specifically rather than treating the wrapper's own non-empty keys as
+//     "content" (an empty RTE doc, e.g. one empty paragraph, still has a
+//     `type`/`uid` set, but no real text).
+//   - any other plain object (a group): empty iff every one of its own
+//     values is empty.
+function isFieldValueEmpty(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value === 'string') return value.trim().length === 0;
+  if (typeof value === 'number' || typeof value === 'boolean') return false;
+  if (Array.isArray(value)) return value.length === 0 || value.every(isFieldValueEmpty);
+
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    if ('children' in obj) return isFieldValueEmpty(obj.children);
+    if ('text' in obj) return isFieldValueEmpty(obj.text);
+    if (typeof obj.uid === 'string' && !('type' in obj)) return isFieldValueEmpty(obj.uid);
+
+    const values = Object.values(obj);
+    return values.length === 0 || values.every(isFieldValueEmpty);
+  }
+
+  return true;
+}
+
+// A category is "filled out" when every one of its configured field paths
+// resolves to at least one non-empty value. A category with no configured
+// paths is treated as always filled out — there's nothing to check, so it
+// shouldn't be blocked from running.
+export function isCategoryFilledOut(entryData: unknown, paths: string[]): boolean {
+  if (paths.length === 0) return true;
+  return paths.every((path) => resolvePath(entryData, path).some((value) => !isFieldValueEmpty(value)));
 }
 
 // Reference equality isn't reliable for nested/array values — they may come

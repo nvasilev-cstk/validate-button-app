@@ -191,20 +191,33 @@ attempting a request.
      change, not a full snapshot, so replacing outright would drop every other field's last
      known live value). Net effect: the normal, fully-formed entry, with whichever field was
      just edited substituted for its live, possibly-unsaved value.
-7. **Polling**: all pending categories share one loop (rather than one per category) — it checks
-   `statusUrl` every 10 seconds, for up to 18 attempts per category (~3 minutes), and resolves
+7. **Empty fields are skipped, not validated.** Before triggering — either path — each
+   category's configured `validation_fields` paths are checked with `isCategoryFilledOut()` in
+   [`src/lib/validationConfig.ts`](src/lib/validationConfig.ts). A category with no filled-out
+   fields never gets a network call at all; instead it immediately shows a synthesized local
+   finding (`status: "incomplete"`, amber, e.g. "Author needs to be filled out before it can be
+   validated.") in its usual spot. For the manual "run all" button this is evaluated per
+   category — categories that *are* filled out still get `POST`ed together and polled as usual;
+   if none are filled out, the `url` call is skipped entirely. "Filled out" handles the field
+   shapes actually in use — blank/whitespace-only strings, empty arrays, unset reference stubs
+   (`{ uid: "" }`), and JSON RTE docs with no real text (an empty paragraph still has structural
+   `type`/`uid`/`attrs` keys, so those are ignored — only `children`/`text` content counts) are
+   all treated as empty; `0`/`false` are treated as real, set values.
+8. **Polling**: all pending categories share one loop (rather than one per category) — it checks
+   `statusUrl` every 5 seconds, for up to 18 attempts per category (~90 seconds), and resolves
    each category independently as soon as its feedback field is non-empty. A category joining
    mid-loop is picked up on the next shared tick rather than getting its own precisely-timed
    first check — simpler to reason about with several categories potentially triggered at
-   different times.
-8. **Display**: each category with feedback renders its own block — a category label followed
-   by a checklist of findings (pass/fail/unknown icon + label, with `message`/`found`/`fix`
-   shown only when present, typically on failing findings) — and stays visible across
-   re-triggers; a re-check shows a small "Re-checking…" note under the existing findings rather
-   than clearing them. A category with no feedback and nothing in progress is omitted entirely.
-   A pending category with no feedback yet shows "Waiting for results…"; a failed/timed-out one
-   shows an error that clears automatically after 8 seconds (existing feedback for other
-   categories is unaffected).
+   different times. (Tune `POLL_INTERVAL_MS`/`MAX_POLL_ATTEMPTS` in `useValidation.ts` if your
+   validation agents run slower than a few seconds.)
+9. **Display**: each category with feedback renders its own block — a category label followed
+   by a checklist of findings (pass/fail/incomplete/unknown icon + label, with
+   `message`/`found`/`fix` shown only when present, typically on failing findings) — and stays
+   visible across re-triggers; a re-check shows a small "Re-checking…" note under the existing
+   findings rather than clearing them. A category with no feedback and nothing in progress is
+   omitted entirely. A pending category with no feedback yet shows "Waiting for results…"; a
+   failed/timed-out one shows an error that clears automatically after 8 seconds (existing
+   feedback for other categories is unaffected).
 
 ### The `ValidationFeedback` lookup content type
 

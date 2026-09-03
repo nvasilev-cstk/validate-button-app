@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, HelpCircle, Info, Loader2, ShieldCheck, XCircle } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle2, HelpCircle, Info, Loader2, ShieldCheck, XCircle } from 'lucide-react';
 import type { CustomFieldLocation } from '../App';
 import { useValidation } from '../hooks/useValidation';
 import type { ValidationFinding } from '../lib/validationApi';
@@ -10,12 +10,19 @@ interface ValidationButtonProps {
 function FindingIcon({ status }: { status?: string }) {
   if (status === 'pass') return <CheckCircle2 size={12} className="cs-finding__icon cs-finding__icon--pass" />;
   if (status === 'fail') return <XCircle size={12} className="cs-finding__icon cs-finding__icon--fail" />;
+  if (status === 'incomplete') return <AlertTriangle size={12} className="cs-finding__icon cs-finding__icon--incomplete" />;
   return <HelpCircle size={12} className="cs-finding__icon cs-finding__icon--unknown" />;
 }
 
 function FindingRow({ finding }: { finding: ValidationFinding }) {
   const statusClass =
-    finding.status === 'pass' ? 'cs-finding--pass' : finding.status === 'fail' ? 'cs-finding--fail' : 'cs-finding--unknown';
+    finding.status === 'pass'
+      ? 'cs-finding--pass'
+      : finding.status === 'fail'
+        ? 'cs-finding--fail'
+        : finding.status === 'incomplete'
+          ? 'cs-finding--incomplete'
+          : 'cs-finding--unknown';
 
   return (
     <li className={`cs-finding ${statusClass}`}>
@@ -36,6 +43,12 @@ function FindingRow({ finding }: { finding: ValidationFinding }) {
       </div>
     </li>
   );
+}
+
+function CategoryIcon({ findings }: { findings: ValidationFinding[] }) {
+  if (findings.some((f) => f.status === 'fail')) return <AlertCircle size={14} className="cs-finding__icon--fail" />;
+  if (findings.some((f) => f.status === 'incomplete')) return <AlertTriangle size={14} className="cs-finding__icon--incomplete" />;
+  return <CheckCircle2 size={14} />;
 }
 
 function ValidationButton({ customField }: ValidationButtonProps) {
@@ -87,6 +100,8 @@ function ValidationButton({ customField }: ValidationButtonProps) {
               <Loader2 className="cs-status__icon cs-status__icon--spin" size={14} />
             ) : state === 'error' && !data ? (
               <AlertCircle size={14} />
+            ) : data ? (
+              <CategoryIcon findings={data.findings} />
             ) : (
               <CheckCircle2 size={14} />
             )}
