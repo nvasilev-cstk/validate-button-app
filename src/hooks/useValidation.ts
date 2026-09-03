@@ -313,6 +313,14 @@ export function useValidation(customField: CustomFieldLocation) {
 
       const entryData = buildEntryPayload();
       const results = syncFilledOutState([categoryKey], entryData);
+      // TEMP DEBUG — remove alongside the other TEMP DEBUG logs once
+      // reference-field auto-trigger payloads are confirmed correct.
+      console.log(`[Validation] triggerCategory("${categoryKey}") payload check`, {
+        filledOut: results.get(categoryKey),
+        paths: config.categoryFieldPaths[categoryKey] ?? [],
+        resolvedValues: (config.categoryFieldPaths[categoryKey] ?? []).map((path) => resolvePath(entryData, path)),
+        liveOverrides: liveFieldOverridesRef.current,
+      });
       if (!results.get(categoryKey)) return;
 
       markPending([categoryKey]);
@@ -371,13 +379,23 @@ export function useValidation(customField: CustomFieldLocation) {
           const prevValues = resolvePath(previous, path);
           const nextValues = resolvePath(next, path);
           const changed = valuesDiffer(prevValues, nextValues);
-          if (changed) {
-            // TEMP DEBUG — remove once field-path watching is confirmed working
-            // for nested/multi-field-group paths like "credits.authors[].author".
-            console.log(`[Validation] (${source}) watch "${path}" (${categoryKey}): changed`, {
+          // TEMP DEBUG — remove once field-path watching is confirmed working
+          // for nested/multi-field-group paths like "credits.authors[].author".
+          // onChange fires on every keystroke, so it's only logged when it
+          // actually found a change. The reference-field poll only fires
+          // every 5s, so it's cheap to log unconditionally — and doing so is
+          // the whole point right now: it tells us whether entry.getData()
+          // ever reflects a newly-added group item / reference change at
+          // all, as opposed to our diff logic failing to notice one it did
+          // receive.
+          if (changed || source === 'poll') {
+            console.log(`[Validation] (${source}) watch "${path}" (${categoryKey}):`, {
               prevValues,
               nextValues,
+              changed,
             });
+          }
+          if (changed) {
             changedCategories.add(categoryKey);
           }
         });
