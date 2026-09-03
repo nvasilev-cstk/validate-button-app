@@ -3,9 +3,10 @@
 A Contentstack App Framework **Custom Field** that runs entry validation across several
 independent categories (headline, URL, author, featured image, SEO, sections/tags, article
 text). A "Trigger Validation" button runs all categories at once; editing a field also
-auto-triggers just the one category that field belongs to. Each category's feedback (HTML,
-written back to a lookup content type by your validation agents) is displayed inline as soon as
-it's available, and omitted entirely while there's nothing to show.
+auto-triggers just the one category that field belongs to. Each category's feedback — a
+findings report written back to a lookup content type by your validation agents — is displayed
+inline as a checklist as soon as it's available, and omitted entirely while there's nothing to
+show.
 
 ## File structure
 
@@ -170,12 +171,14 @@ attempting a request.
    mid-loop is picked up on the next shared tick rather than getting its own precisely-timed
    first check — simpler to reason about with several categories potentially triggered at
    different times.
-8. **Display**: each category with feedback renders its own block (category label + HTML
-   content), and stays visible across re-triggers — a re-check shows a small "Re-checking…"
-   note under the existing content rather than clearing it. A category with no feedback and
-   nothing in progress is omitted entirely. A pending category with no feedback yet shows
-   "Waiting for results…"; a failed/timed-out one shows an error that clears automatically after
-   8 seconds (existing feedback for other categories is unaffected).
+8. **Display**: each category with feedback renders its own block — a category label followed
+   by a checklist of findings (pass/fail/unknown icon + label, with `message`/`found`/`fix`
+   shown only when present, typically on failing findings) — and stays visible across
+   re-triggers; a re-check shows a small "Re-checking…" note under the existing findings rather
+   than clearing them. A category with no feedback and nothing in progress is omitted entirely.
+   A pending category with no feedback yet shows "Waiting for results…"; a failed/timed-out one
+   shows an error that clears automatically after 8 seconds (existing feedback for other
+   categories is unaffected).
 
 ### The `ValidationFeedback` lookup content type
 
@@ -186,18 +189,41 @@ entry shaped like:
 |-------------------------------|----------------------------------|---------------------------------------------|
 | Title                          | `title`                          | required, unique                              |
 | EntryID                        | `entryid`                        | the `uid` of the entry that was validated     |
-| Headline Feedback              | `headline_feedback`              | Text — HTML feedback                          |
-| URL Feedback                   | `url_feedback`                   | Text — HTML feedback                          |
-| Authors Feedback               | `authors_feedback`               | Text — HTML feedback                          |
-| Featured Image Feedback        | `featured_image_feedback`        | Text — HTML feedback                          |
-| SEO Feedback                   | `seo_feedback`                   | Text — HTML feedback                          |
-| Sections and Tags Feedback     | `sections_and_tags_feedback`     | Text — HTML feedback                          |
-| Article Text Feedback          | `article_text_feedback`          | Text — HTML feedback                          |
+| Headline Feedback              | `headline_feedback`              | JSON — findings report (see below)            |
+| URL Feedback                   | `url_feedback`                   | JSON — findings report                        |
+| Authors Feedback               | `authors_feedback`               | JSON — findings report                        |
+| Featured Image Feedback        | `featured_image_feedback`        | JSON — findings report                        |
+| SEO Feedback                   | `seo_feedback`                   | JSON — findings report                        |
+| Sections and Tags Feedback     | `sections_and_tags_feedback`     | JSON — findings report                        |
+| Article Text Feedback          | `article_text_feedback`          | JSON — findings report                        |
 
-Each `*_feedback` field is a plain text field whose value is expected to already be an HTML
-string (not JSON RTE) — it's sanitized with `DOMPurify` and injected as-is. Only fields with
-actual content are rendered — an empty/missing feedback field for a category is omitted, per
-spec.
+Each `*_feedback` field is a `json`-typed field (rendered in the Contentstack entry editor by
+its own custom-field extension, which doesn't affect what the Management API returns to this
+app) holding a findings report shaped like:
+
+```json
+{
+  "group": "Headline",
+  "findings": [
+    {
+      "category": "Headline",
+      "status": "pass",
+      "field": "title",
+      "message": "",
+      "found": "",
+      "fix": "",
+      "id": "headline.present",
+      "label": "Headline is filled in"
+    }
+  ]
+}
+```
+
+`message`/`found`/`fix` are plain text (not HTML or markdown) and are typically only populated
+on non-passing findings — `extractFeedbackByField` in
+[`src/lib/validationApi.ts`](src/lib/validationApi.ts) treats a field as "has feedback" only
+when it parses to this shape with a non-empty `findings` array; anything else (missing, empty,
+or malformed) is treated as no feedback yet, per spec.
 
 The legacy `feedback`/`markdown` text fields on this content type (from an earlier version of
 this schema) are no longer read by the app — feedback is now sourced entirely from the 7
@@ -216,6 +242,5 @@ refresh manually.
 ## Dependencies
 
 - `@contentstack/app-sdk` — Contentstack App Framework SDK (location, entry, field APIs)
-- `dompurify` — sanitizes each feedback field's HTML string before it's injected into the page
 - `react` / `react-dom` — UI
-- `lucide-react` — icons (spinner, success/error/shield icons)
+- `lucide-react` — icons (spinner, pass/fail/unknown finding icons, shield icon)

@@ -1,5 +1,3 @@
-import DOMPurify from 'dompurify';
-
 // Contentstack's Management API expects these two headers on every request.
 export function buildManagementHeaders(apiKey: string, authorization: string): HeadersInit {
   const headers: Record<string, string> = {};
@@ -65,15 +63,45 @@ export async function fetchFeedbackEntry(
   }
 }
 
-// Each feedback field is a plain text field containing an HTML string.
-// Sanitizes whichever fields are present into HTML safe for
-// dangerouslySetInnerHTML; empty/missing fields are omitted from the result.
-export function extractFeedbackHtmlByField(entry: FeedbackEntry, fieldUids: string[]): Record<string, string> {
-  const result: Record<string, string> = {};
+// One check result within a category, e.g.:
+// { category: "Headline", status: "pass", field: "title", message: "",
+//   found: "", fix: "", id: "headline.present", label: "Headline is filled in" }
+// `message`/`found`/`fix` are plain text (not HTML) and typically only
+// populated for non-passing findings.
+export interface ValidationFinding {
+  category?: string;
+  status?: string;
+  field?: string;
+  message?: string;
+  found?: string;
+  fix?: string;
+  id?: string;
+  label?: string;
+}
+
+export interface CategoryFeedback {
+  group?: string;
+  findings: ValidationFinding[];
+}
+
+function isCategoryFeedback(value: unknown): value is CategoryFeedback {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    Array.isArray((value as CategoryFeedback).findings) &&
+    (value as CategoryFeedback).findings.length > 0
+  );
+}
+
+// Each feedback field holds a JSON object shaped like CategoryFeedback.
+// Fields that are empty, missing, or don't match that shape are omitted
+// from the result — a category with nothing to report just isn't included.
+export function extractFeedbackByField(entry: FeedbackEntry, fieldUids: string[]): Record<string, CategoryFeedback> {
+  const result: Record<string, CategoryFeedback> = {};
   for (const uid of fieldUids) {
     const value = entry[uid];
-    if (typeof value === 'string' && value.trim()) {
-      result[uid] = DOMPurify.sanitize(value);
+    if (isCategoryFeedback(value)) {
+      result[uid] = value;
     }
   }
   return result;

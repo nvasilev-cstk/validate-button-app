@@ -1,13 +1,45 @@
-import { AlertCircle, CheckCircle2, Info, Loader2, ShieldCheck } from 'lucide-react';
+import { AlertCircle, CheckCircle2, HelpCircle, Info, Loader2, ShieldCheck, XCircle } from 'lucide-react';
 import type { CustomFieldLocation } from '../App';
 import { useValidation } from '../hooks/useValidation';
+import type { ValidationFinding } from '../lib/validationApi';
 
 interface ValidationButtonProps {
   customField: CustomFieldLocation;
 }
 
+function FindingIcon({ status }: { status?: string }) {
+  if (status === 'pass') return <CheckCircle2 size={12} className="cs-finding__icon cs-finding__icon--pass" />;
+  if (status === 'fail') return <XCircle size={12} className="cs-finding__icon cs-finding__icon--fail" />;
+  return <HelpCircle size={12} className="cs-finding__icon cs-finding__icon--unknown" />;
+}
+
+function FindingRow({ finding }: { finding: ValidationFinding }) {
+  const statusClass =
+    finding.status === 'pass' ? 'cs-finding--pass' : finding.status === 'fail' ? 'cs-finding--fail' : 'cs-finding--unknown';
+
+  return (
+    <li className={`cs-finding ${statusClass}`}>
+      <FindingIcon status={finding.status} />
+      <div className="cs-finding__body">
+        <span className="cs-finding__label">{finding.label || finding.id || 'Check'}</span>
+        {finding.message && <div className="cs-finding__detail">{finding.message}</div>}
+        {finding.found && (
+          <div className="cs-finding__detail">
+            <strong>Found:</strong> {finding.found}
+          </div>
+        )}
+        {finding.fix && (
+          <div className="cs-finding__detail">
+            <strong>Fix:</strong> {finding.fix}
+          </div>
+        )}
+      </div>
+    </li>
+  );
+}
+
 function ValidationButton({ customField }: ValidationButtonProps) {
-  const { hasSavedEntry, categories, feedbackHtml, categoryState, isTriggeringAll, globalError, triggerAll } =
+  const { hasSavedEntry, categories, feedback, categoryState, isTriggeringAll, globalError, triggerAll } =
     useValidation(customField);
 
   const label = isTriggeringAll ? 'Sending…' : 'Trigger Validation';
@@ -43,31 +75,35 @@ function ValidationButton({ customField }: ValidationButtonProps) {
       )}
 
       {categories.map((category) => {
-        const html = feedbackHtml[category.feedbackFieldUid];
+        const data = feedback[category.feedbackFieldUid];
         const state = categoryState[category.key] ?? 'idle';
 
         // Nothing to show and nothing in progress — omit entirely, per spec.
-        if (!html && state === 'idle') return null;
+        if (!data && state === 'idle') return null;
 
         return (
-          <div key={category.key} className="cs-status cs-status--success cs-status--feedback">
-            {state === 'pending' ? (
+          <div key={category.key} className="cs-status cs-status--report">
+            {state === 'pending' && !data ? (
               <Loader2 className="cs-status__icon cs-status__icon--spin" size={14} />
-            ) : state === 'error' ? (
+            ) : state === 'error' && !data ? (
               <AlertCircle size={14} />
             ) : (
               <CheckCircle2 size={14} />
             )}
             <div className="cs-status__content">
               <div className="cs-status__category-label">{category.label}</div>
-              {html ? (
-                <div dangerouslySetInnerHTML={{ __html: html }} />
+              {data ? (
+                <ul className="cs-findings">
+                  {data.findings.map((finding, index) => (
+                    <FindingRow key={finding.id ?? index} finding={finding} />
+                  ))}
+                </ul>
               ) : state === 'pending' ? (
                 <span>Waiting for results…</span>
               ) : (
                 <span>Validation failed or timed out.</span>
               )}
-              {html && state === 'pending' && <div className="cs-status__rechecking">Re-checking…</div>}
+              {data && state === 'pending' && <div className="cs-status__rechecking">Re-checking…</div>}
             </div>
           </div>
         );

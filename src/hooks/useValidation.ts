@@ -3,9 +3,10 @@ import type { CustomFieldLocation } from '../App';
 import { VALIDATION_CATEGORIES, parseValidationConfig } from '../lib/validationConfig';
 import {
   buildManagementHeaders,
-  extractFeedbackHtmlByField,
+  extractFeedbackByField,
   fetchFeedbackEntry,
   postEntryForValidation,
+  type CategoryFeedback,
 } from '../lib/validationApi';
 
 export type CategoryState = 'idle' | 'pending' | 'error';
@@ -42,7 +43,7 @@ export function useValidation(customField: CustomFieldLocation) {
   }, []);
 
   const [hasSavedEntry, setHasSavedEntry] = useState(() => Boolean(customField.entry.getData()?.uid));
-  const [feedbackHtml, setFeedbackHtml] = useState<Record<string, string>>({});
+  const [feedback, setFeedback] = useState<Record<string, CategoryFeedback>>({});
   const [categoryState, setCategoryState] = useState<Record<string, CategoryState>>({});
   const [isTriggeringAll, setIsTriggeringAll] = useState(false);
   const [globalError, setGlobalError] = useState('');
@@ -69,16 +70,16 @@ export function useValidation(customField: CustomFieldLocation) {
     const feedbackEntry = await fetchFeedbackEntry(config.statusUrl, entryUid, managementHeaders);
     if (!feedbackEntry || !isMounted.current) return;
 
-    const htmlByField = extractFeedbackHtmlByField(feedbackEntry, feedbackFieldUids);
-    if (Object.keys(htmlByField).length > 0) {
-      setFeedbackHtml((prev) => ({ ...prev, ...htmlByField }));
+    const byField = extractFeedbackByField(feedbackEntry, feedbackFieldUids);
+    if (Object.keys(byField).length > 0) {
+      setFeedback((prev) => ({ ...prev, ...byField }));
     }
 
     setCategoryState((prev) => {
       let changed = false;
       const next = { ...prev };
       for (const def of VALIDATION_CATEGORIES) {
-        if (pendingAttemptsRef.current.has(def.key) && htmlByField[def.feedbackFieldUid]) {
+        if (pendingAttemptsRef.current.has(def.key) && byField[def.feedbackFieldUid]) {
           pendingAttemptsRef.current.delete(def.key);
           next[def.key] = 'idle';
           changed = true;
@@ -285,7 +286,7 @@ export function useValidation(customField: CustomFieldLocation) {
   return {
     hasSavedEntry,
     categories: VALIDATION_CATEGORIES,
-    feedbackHtml,
+    feedback,
     categoryState,
     isTriggeringAll,
     globalError,
