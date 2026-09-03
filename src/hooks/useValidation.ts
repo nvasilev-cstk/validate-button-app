@@ -371,14 +371,13 @@ export function useValidation(customField: CustomFieldLocation) {
           const prevValues = resolvePath(previous, path);
           const nextValues = resolvePath(next, path);
           const changed = valuesDiffer(prevValues, nextValues);
-          // TEMP DEBUG — remove once field-path watching is confirmed working
-          // for nested/multi-field-group paths like "credits.authors[].author".
-          console.log(`[Validation] (${source}) watch "${path}" (${categoryKey}):`, {
-            prevValues,
-            nextValues,
-            changed,
-          });
           if (changed) {
+            // TEMP DEBUG — remove once field-path watching is confirmed working
+            // for nested/multi-field-group paths like "credits.authors[].author".
+            console.log(`[Validation] (${source}) watch "${path}" (${categoryKey}): changed`, {
+              prevValues,
+              nextValues,
+            });
             changedCategories.add(categoryKey);
           }
         });
