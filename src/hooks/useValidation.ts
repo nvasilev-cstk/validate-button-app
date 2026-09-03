@@ -85,38 +85,60 @@ export function useValidation(customField: CustomFieldLocation) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customField]);
 
-  const refreshFeedback = useCallback(async () => {
-    if (!config.statusUrl) return;
-    const entryUid = customField.entry.getData()?.uid;
-    if (!entryUid) return;
+  // `mode: 'initial'` (the one-shot check on mount) merges in whatever's
+  // found for every category — `feedback` is still empty at that point, so
+  // there's nothing to clobber. `mode: 'poll'` (every tick of the shared
+  // polling loop) only merges categories that are actually pending right
+  // now — otherwise a poll running for some *other* still-pending category
+  // would blindly re-fetch and overwrite an already-resolved category (e.g.
+  // one just locally set to "needs to be filled out" after an author was
+  // removed) with whatever stale result is still sitting in the
+  // ValidationFeedback entry from its last real run.
+  const refreshFeedback = useCallback(
+    async (mode: 'initial' | 'poll' = 'poll') => {
+      if (!config.statusUrl) return;
+      const entryUid = customField.entry.getData()?.uid;
+      if (!entryUid) return;
 
-    const feedbackEntry = await fetchFeedbackEntry(config.statusUrl, entryUid, managementHeaders);
-    if (!feedbackEntry || !isMounted.current) return;
+      const feedbackEntry = await fetchFeedbackEntry(config.statusUrl, entryUid, managementHeaders);
+      if (!feedbackEntry || !isMounted.current) return;
 
-    const byField = extractFeedbackByField(feedbackEntry, feedbackFieldUids);
-    if (Object.keys(byField).length > 0) {
-      setFeedback((prev) => ({ ...prev, ...byField }));
-    }
+      const byField = extractFeedbackByField(feedbackEntry, feedbackFieldUids);
 
-    setCategoryState((prev) => {
-      let changed = false;
-      const next = { ...prev };
+      const relevantByField: Record<string, CategoryFeedback> = {};
       for (const def of VALIDATION_CATEGORIES) {
-        if (pendingAttemptsRef.current.has(def.key) && byField[def.feedbackFieldUid]) {
-          pendingAttemptsRef.current.delete(def.key);
-          next[def.key] = 'idle';
-          changed = true;
+        const value = byField[def.feedbackFieldUid];
+        if (!value) continue;
+        if (mode === 'initial' || pendingAttemptsRef.current.has(def.key)) {
+          relevantByField[def.feedbackFieldUid] = value;
         }
       }
-      return changed ? next : prev;
-    });
-  }, [config, customField, managementHeaders, feedbackFieldUids]);
+
+      if (Object.keys(relevantByField).length > 0) {
+        setFeedback((prev) => ({ ...prev, ...relevantByField }));
+      }
+
+      setCategoryState((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const def of VALIDATION_CATEGORIES) {
+          if (pendingAttemptsRef.current.has(def.key) && byField[def.feedbackFieldUid]) {
+            pendingAttemptsRef.current.delete(def.key);
+            next[def.key] = 'idle';
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    },
+    [config, customField, managementHeaders, feedbackFieldUids]
+  );
 
   // If validation has already run for this entry (e.g. the editor reopened
   // it after a previous trigger), show existing feedback immediately.
   useEffect(() => {
     if (!hasSavedEntry) return;
-    refreshFeedback();
+    refreshFeedback('initial');
     // Only ever check once, right after the entry has a uid.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasSavedEntry]);
@@ -187,10 +209,15 @@ export function useValidation(customField: CustomFieldLocation) {
 
   // A category whose configured fields are empty is shown a local "needs to
   // be filled out" message instead of being sent for validation at all — no
-  // network call, no waiting/polling for it.
+  // network call, no waiting/polling for it. Also clears any pending state
+  // left over from an earlier still-in-flight trigger for this category —
+  // otherwise the next poll tick would still treat it as pending, find the
+  // old (now stale) result still sitting in the ValidationFeedback entry,
+  // and silently overwrite this message with it.
   const showIncompleteMessage = useCallback((categoryKey: string) => {
     const def = VALIDATION_CATEGORIES.find((c) => c.key === categoryKey);
     if (!def) return;
+    pendingAttemptsRef.current.delete(categoryKey);
     setFeedback((prev) => ({
       ...prev,
       [def.feedbackFieldUid]: {
@@ -286,12 +313,12 @@ export function useValidation(customField: CustomFieldLocation) {
   const debounceTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const checkForFieldChanges = useCallback(
-    (next: Record<string, unknown>, source: 'onChange' | 'poll') => {
+    (next: Record<string, unknown>, source: 'onChange' | 'poll', pathsToCheck: Map<string, string>) => {
       const previous = liveFieldOverridesRef.current;
 
-      if (config.fieldPathToCategory.size > 0) {
+      if (pathsToCheck.size > 0) {
         const changedCategories = new Set<string>();
-        config.fieldPathToCategory.forEach((categoryKey, path) => {
+        pathsToCheck.forEach((categoryKey, path) => {
           const prevValues = resolvePath(previous, path);
           const nextValues = resolvePath(next, path);
           const changed = valuesDiffer(prevValues, nextValues);
@@ -326,30 +353,35 @@ export function useValidation(customField: CustomFieldLocation) {
       // last known live value.
       liveFieldOverridesRef.current = { ...previous, ...next };
     },
-    [config, triggerCategory]
+    [triggerCategory]
   );
 
   // Keeps liveFieldOverridesRef in sync with live edits on every change, and
   // auto-triggers a category's own check when one of its fields changes,
   // debounced so a category fires once after the editor pauses rather than
-  // once per keystroke.
+  // once per keystroke. Watches every configured path — for plain fields
+  // this alone is enough, since onChange fires near-instantly.
   useEffect(() => {
     customField.entry.onChange((_unresolved, resolved) => {
-      checkForFieldChanges(resolved ?? {}, 'onChange');
+      checkForFieldChanges(resolved ?? {}, 'onChange', config.fieldPathToCategory);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customField, checkForFieldChanges]);
+  }, [customField, config, checkForFieldChanges]);
 
-  // Fallback for hosts where entry.onChange doesn't fire until some later
-  // UI commit point rather than immediately — observed with Contentstack
-  // only reporting a change made inside a Global Field/group once that
-  // group is collapsed again, not when a reference is picked inside it.
-  // Polls entry.getData() on the same cadence as the result-polling loop
-  // and runs it through the exact same change-detection path, so a category
-  // only ever fires once regardless of which of the two notices the change
-  // first (they share liveFieldOverridesRef/debounceTimersRef above).
+  // Fallback for reference fields specifically (paths using the `[]`
+  // multi-field-group marker — see referenceFieldPathToCategory), where
+  // entry.onChange doesn't fire until some later UI commit point rather
+  // than immediately: observed with Contentstack only reporting a change
+  // made inside a Global Field/group once that group is collapsed again,
+  // not when a reference is picked inside it. Plain text fields don't have
+  // this problem and are left to onChange alone above — no need to poll
+  // for them too. Polls entry.getData() on the same cadence as the
+  // result-polling loop and runs it through the exact same change-detection
+  // path, so a category only ever fires once regardless of which of the
+  // two notices the change first (they share liveFieldOverridesRef/
+  // debounceTimersRef above).
   useEffect(() => {
-    if (config.fieldPathToCategory.size === 0) return;
+    if (config.referenceFieldPathToCategory.size === 0) return;
 
     let cancelled = false;
 
@@ -357,7 +389,7 @@ export function useValidation(customField: CustomFieldLocation) {
       while (!cancelled) {
         await wait(POLL_INTERVAL_MS);
         if (cancelled || !isMounted.current) return;
-        checkForFieldChanges(customField.entry.getData() ?? {}, 'poll');
+        checkForFieldChanges(customField.entry.getData() ?? {}, 'poll', config.referenceFieldPathToCategory);
       }
     };
 

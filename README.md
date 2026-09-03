@@ -178,14 +178,17 @@ attempting a request.
    trigger no matter which path notices it first (they share the same "last known values" and
    debounce-timer state):
    - **`entry.onChange`** fires on every real edit (unlike `field.onChange`, which only fires on
-     programmatic writes from other apps — not from someone typing in the editor). This is the
-     primary, near-instant path for ordinary top-level and grouped fields.
-   - **A 5-second poll of `entry.getData()`** (same cadence as the result-polling loop) is a
-     fallback for cases where `entry.onChange` doesn't fire immediately — observed with
-     Contentstack only reporting a change made inside a Global Field/multi-field group once that
-     group is collapsed again, not the moment a reference is picked inside it. Without this, an
-     `authors_feedback`-style auto-trigger wouldn't fire until the editor happened to collapse
-     that section.
+     programmatic writes from other apps — not from someone typing in the editor), for every
+     configured path. This is the primary, near-instant path, and it's the *only* path for plain
+     (non-`[]`) fields — they don't have the delayed-reporting problem below, so there's no need
+     to also poll for them.
+   - **A 5-second poll of `entry.getData()`** (same cadence as the result-polling loop) covers
+     only the paths in `referenceFieldPathToCategory` — the `[]`-wildcarded ones, e.g.
+     `credits.authors[].author` — as a fallback for reference fields specifically, where
+     `entry.onChange` doesn't fire immediately: observed with Contentstack only reporting a
+     change made inside a Global Field/multi-field group once that group is collapsed again, not
+     the moment a reference is picked inside it. Without this, an `authors_feedback`-style
+     auto-trigger wouldn't fire until the editor happened to collapse that section.
 
    Either path resolves each `validation_fields` path (via `resolvePath`, supporting
    nested/group and `[]`-wildcarded multi-field-group paths — see above) against the previous
@@ -221,7 +224,14 @@ attempting a request.
    mid-loop is picked up on the next shared tick rather than getting its own precisely-timed
    first check — simpler to reason about with several categories potentially triggered at
    different times. (Tune `POLL_INTERVAL_MS`/`MAX_POLL_ATTEMPTS` in `useValidation.ts` if your
-   validation agents run slower than a few seconds.)
+   validation agents run slower than a few seconds.) **Each poll tick only updates categories
+   that are currently pending** — it never blindly overwrites every category from whatever's in
+   the ValidationFeedback entry. Without this, removing a reference (e.g. clearing the author)
+   while some *other* category was still mid-poll would have its fresh local "needs to be filled
+   out" message immediately clobbered by the stale real result still sitting in
+   `authors_feedback` from the last time author validation actually ran. The one-shot "show
+   existing feedback on reopen" check (step 4 above) is the exception — it merges everything
+   found, since nothing has been shown yet at that point.
 9. **Display**: each category with feedback renders its own block — a category label followed
    by a checklist of findings (pass/fail/incomplete/unknown icon + label, with
    `message`/`found`/`fix` shown only when present, typically on failing findings) — and stays
