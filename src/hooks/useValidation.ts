@@ -238,14 +238,33 @@ export function useValidation(customField: CustomFieldLocation) {
   useEffect(() => {
     const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    customField.entry.onChange((_unresolved, resolved) => {
+    customField.entry.onChange((unresolved, resolved) => {
       const next: Record<string, unknown> = resolved ?? {};
       const previous = liveFieldOverridesRef.current;
+
+      // TEMP DEBUG — remove once field-path watching is confirmed working
+      // for nested/multi-field-group paths like "credits.authors". Checks
+      // whether the top-level key even exists in each payload — if
+      // "hasCredits" is false on both, `resolved`/`unresolved` don't carry
+      // this field at all for this change, which would explain why no
+      // change is ever detected for anything under it.
+      console.log('[Validation] entry.onChange fired', {
+        unresolvedHasCredits: Object.prototype.hasOwnProperty.call(unresolved ?? {}, 'credits'),
+        resolvedHasCredits: Object.prototype.hasOwnProperty.call(next, 'credits'),
+        unresolvedCredits: (unresolved as Record<string, unknown> | undefined)?.credits,
+        resolvedCredits: next.credits,
+      });
 
       if (config.fieldPathToCategory.size > 0) {
         const changedCategories = new Set<string>();
         config.fieldPathToCategory.forEach((categoryKey, path) => {
-          if (valuesDiffer(getByPath(previous, path), getByPath(next, path))) {
+          const prevValue = getByPath(previous, path);
+          const nextValue = getByPath(next, path);
+          const changed = valuesDiffer(prevValue, nextValue);
+          // TEMP DEBUG — remove once field-path watching is confirmed working
+          // for nested/multi-field-group paths like "credits.authors".
+          console.log(`[Validation] watch "${path}" (${categoryKey}):`, { prevValue, nextValue, changed });
+          if (changed) {
             changedCategories.add(categoryKey);
           }
         });
