@@ -279,29 +279,15 @@ export function useValidation(customField: CustomFieldLocation) {
     [config, hasSavedEntry, buildEntryPayload, showIncompleteMessage, markPending, startPollingIfNeeded]
   );
 
-  // Keeps liveFieldOverridesRef in sync with live edits on every change, and
-  // auto-triggers a category's own check when one of its fields changes,
-  // debounced so a category fires once after the editor pauses rather than
-  // once per keystroke.
-  useEffect(() => {
-    const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Shared by both change-detection paths below (entry.onChange, and the
+  // polling fallback) so a change is only ever debounced/triggered once no
+  // matter which one notices it first — both read/write the same
+  // liveFieldOverridesRef and debounceTimersRef.
+  const debounceTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
-    customField.entry.onChange((unresolved, resolved) => {
-      const next: Record<string, unknown> = resolved ?? {};
+  const checkForFieldChanges = useCallback(
+    (next: Record<string, unknown>, source: 'onChange' | 'poll') => {
       const previous = liveFieldOverridesRef.current;
-
-      // TEMP DEBUG — remove once field-path watching is confirmed working
-      // for nested/multi-field-group paths like "credits.authors". Checks
-      // whether the top-level key even exists in each payload — if
-      // "hasCredits" is false on both, `resolved`/`unresolved` don't carry
-      // this field at all for this change, which would explain why no
-      // change is ever detected for anything under it.
-      console.log('[Validation] entry.onChange fired', {
-        unresolvedHasCredits: Object.prototype.hasOwnProperty.call(unresolved ?? {}, 'credits'),
-        resolvedHasCredits: Object.prototype.hasOwnProperty.call(next, 'credits'),
-        unresolvedCredits: (unresolved as Record<string, unknown> | undefined)?.credits,
-        resolvedCredits: next.credits,
-      });
 
       if (config.fieldPathToCategory.size > 0) {
         const changedCategories = new Set<string>();
@@ -311,36 +297,84 @@ export function useValidation(customField: CustomFieldLocation) {
           const changed = valuesDiffer(prevValues, nextValues);
           // TEMP DEBUG — remove once field-path watching is confirmed working
           // for nested/multi-field-group paths like "credits.authors[].author".
-          console.log(`[Validation] watch "${path}" (${categoryKey}):`, { prevValues, nextValues, changed });
+          console.log(`[Validation] (${source}) watch "${path}" (${categoryKey}):`, {
+            prevValues,
+            nextValues,
+            changed,
+          });
           if (changed) {
             changedCategories.add(categoryKey);
           }
         });
 
         changedCategories.forEach((categoryKey) => {
-          const existingTimer = debounceTimers.get(categoryKey);
+          const existingTimer = debounceTimersRef.current.get(categoryKey);
           if (existingTimer) clearTimeout(existingTimer);
-          debounceTimers.set(
+          debounceTimersRef.current.set(
             categoryKey,
             setTimeout(() => {
-              debounceTimers.delete(categoryKey);
+              debounceTimersRef.current.delete(categoryKey);
               triggerCategory(categoryKey);
             }, FIELD_CHANGE_DEBOUNCE_MS)
           );
         });
       }
 
-      // Merge rather than replace — `resolved` only reports the fields
-      // involved in this change, not a full snapshot, so replacing outright
-      // would drop every other field's last known live value.
+      // Merge rather than replace — `next` (from either source) only
+      // reports the fields involved in that particular update, not a full
+      // snapshot, so replacing outright would drop every other field's
+      // last known live value.
       liveFieldOverridesRef.current = { ...previous, ...next };
+    },
+    [config, triggerCategory]
+  );
+
+  // Keeps liveFieldOverridesRef in sync with live edits on every change, and
+  // auto-triggers a category's own check when one of its fields changes,
+  // debounced so a category fires once after the editor pauses rather than
+  // once per keystroke.
+  useEffect(() => {
+    customField.entry.onChange((_unresolved, resolved) => {
+      checkForFieldChanges(resolved ?? {}, 'onChange');
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customField, checkForFieldChanges]);
+
+  // Fallback for hosts where entry.onChange doesn't fire until some later
+  // UI commit point rather than immediately — observed with Contentstack
+  // only reporting a change made inside a Global Field/group once that
+  // group is collapsed again, not when a reference is picked inside it.
+  // Polls entry.getData() on the same cadence as the result-polling loop
+  // and runs it through the exact same change-detection path, so a category
+  // only ever fires once regardless of which of the two notices the change
+  // first (they share liveFieldOverridesRef/debounceTimersRef above).
+  useEffect(() => {
+    if (config.fieldPathToCategory.size === 0) return;
+
+    let cancelled = false;
+
+    const tick = async () => {
+      while (!cancelled) {
+        await wait(POLL_INTERVAL_MS);
+        if (cancelled || !isMounted.current) return;
+        checkForFieldChanges(customField.entry.getData() ?? {}, 'poll');
+      }
+    };
+
+    tick();
 
     return () => {
-      debounceTimers.forEach((timer) => clearTimeout(timer));
+      cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config, customField]);
+  }, [config, customField, checkForFieldChanges]);
+
+  // Cancel any pending debounced triggers on unmount.
+  useEffect(() => {
+    return () => {
+      debounceTimersRef.current.forEach((timer) => clearTimeout(timer));
+      debounceTimersRef.current.clear();
+    };
+  }, []);
 
   // Auto-clear a category's error state after a while so a failed/timed-out
   // check doesn't clutter the UI forever.

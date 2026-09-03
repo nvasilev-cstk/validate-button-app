@@ -173,14 +173,26 @@ attempting a request.
    earlier) — no click required.
 5. **Manual trigger**: clicking the button `POST`s the entry to `url`, then marks *all 7*
    categories as pending and starts the shared polling loop.
-6. **Auto-trigger per field edit**: `entry.onChange` fires on every real edit (unlike
-   `field.onChange`, which only fires on programmatic writes from other apps — not from someone
-   typing in the editor). The hook resolves each `validation_fields` path (via `resolvePath`,
-   supporting nested/group and `[]`-wildcarded multi-field-group paths — see above) against the
-   previous and current snapshot, deep-compares the resulting value sets, maps any changed path
-   to its category, and — after a 1.5s debounce so typing a full sentence doesn't fire a request
-   per keystroke — `POST`s the entry to that one category's
-   `validation_urls` endpoint and marks just that category pending.
+6. **Auto-trigger per field edit**: two independent detection paths feed the same
+   `checkForFieldChanges()` function in `useValidation.ts`, so a change only ever fires one
+   trigger no matter which path notices it first (they share the same "last known values" and
+   debounce-timer state):
+   - **`entry.onChange`** fires on every real edit (unlike `field.onChange`, which only fires on
+     programmatic writes from other apps — not from someone typing in the editor). This is the
+     primary, near-instant path for ordinary top-level and grouped fields.
+   - **A 5-second poll of `entry.getData()`** (same cadence as the result-polling loop) is a
+     fallback for cases where `entry.onChange` doesn't fire immediately — observed with
+     Contentstack only reporting a change made inside a Global Field/multi-field group once that
+     group is collapsed again, not the moment a reference is picked inside it. Without this, an
+     `authors_feedback`-style auto-trigger wouldn't fire until the editor happened to collapse
+     that section.
+
+   Either path resolves each `validation_fields` path (via `resolvePath`, supporting
+   nested/group and `[]`-wildcarded multi-field-group paths — see above) against the previous
+   and current snapshot, deep-compares the resulting value sets, maps any changed path to its
+   category, and — after a 1.5s debounce so typing a full sentence doesn't fire a request per
+   keystroke — `POST`s the entry to that one category's `validation_urls` endpoint and marks
+   just that category pending.
    - **Every POST body — manual or auto-triggered — is built by `buildEntryPayload()`:**
      `{ ...entry.getData(), ...liveFieldOverridesRef.current }`. `entry.getData()` is called
      fresh every time, so entry-level metadata (`uid`, etc. — which `entry.onChange`'s
