@@ -53,13 +53,22 @@ export function useValidation(customField: CustomFieldLocation) {
   const pendingAttemptsRef = useRef<Map<string, number>>(new Map());
   const isPollingRef = useRef(false);
 
-  // entry.getData() reflects the last *saved* state, not live edits — so it's
-  // wrong to call it right before POSTing (the whole point of auto-triggering
-  // on a field edit is to send the value that was just typed, which may not
-  // be saved yet). entry.onChange's `resolved` argument is the one that's
-  // actually live, so every POST payload is built from this ref instead,
-  // kept in sync by the single onChange subscription below.
-  const latestEntryDataRef = useRef<Record<string, unknown>>(customField.entry.getData() ?? {});
+  // entry.getData() reflects the last *saved* state for field values — wrong
+  // to send as-is right after an edit — but it's the only reliable source
+  // for entry-level metadata like `uid`, which entry.onChange's `resolved`
+  // argument doesn't carry. So POST payloads are built by taking a fresh
+  // entry.getData() as the base (guarantees uid/metadata are present and
+  // current) and overlaying only the live field values captured from
+  // onChange on top of it. This ref holds just those live overrides, kept
+  // in sync by the single onChange subscription below.
+  // Seeded from a full entry snapshot (not empty) so the very first diff
+  // comparison below has a correct baseline instead of treating every field
+  // as "changed from undefined" on the first edit after mount.
+  const liveFieldOverridesRef = useRef<Record<string, unknown>>(customField.entry.getData() ?? {});
+
+  const buildEntryPayload = useCallback((): Record<string, unknown> => {
+    return { ...customField.entry.getData(), ...liveFieldOverridesRef.current };
+  }, [customField]);
 
   useEffect(() => {
     customField.entry.onSave((savedEntry) => {
@@ -184,7 +193,7 @@ export function useValidation(customField: CustomFieldLocation) {
     setIsTriggeringAll(true);
 
     try {
-      await postEntryForValidation(config.triggerUrl, latestEntryDataRef.current);
+      await postEntryForValidation(config.triggerUrl, buildEntryPayload());
     } catch (err) {
       if (isMounted.current) {
         setIsTriggeringAll(false);
@@ -197,7 +206,7 @@ export function useValidation(customField: CustomFieldLocation) {
     setIsTriggeringAll(false);
     markPending(VALIDATION_CATEGORIES.map((def) => def.key));
     startPollingIfNeeded();
-  }, [hasSavedEntry, config, markPending, startPollingIfNeeded]);
+  }, [hasSavedEntry, config, buildEntryPayload, markPending, startPollingIfNeeded]);
 
   const triggerCategory = useCallback(
     async (categoryKey: string) => {
@@ -207,7 +216,7 @@ export function useValidation(customField: CustomFieldLocation) {
       markPending([categoryKey]);
 
       try {
-        await postEntryForValidation(url, latestEntryDataRef.current);
+        await postEntryForValidation(url, buildEntryPayload());
       } catch (err) {
         console.error(`[Validation] Failed to auto-trigger "${categoryKey}"`, err);
         if (isMounted.current) {
@@ -219,10 +228,10 @@ export function useValidation(customField: CustomFieldLocation) {
 
       startPollingIfNeeded();
     },
-    [config, hasSavedEntry, markPending, startPollingIfNeeded]
+    [config, hasSavedEntry, buildEntryPayload, markPending, startPollingIfNeeded]
   );
 
-  // Keeps latestEntryDataRef in sync with live edits on every change, and
+  // Keeps liveFieldOverridesRef in sync with live edits on every change, and
   // auto-triggers a category's own check when one of its fields changes,
   // debounced so a category fires once after the editor pauses rather than
   // once per keystroke.
@@ -231,7 +240,7 @@ export function useValidation(customField: CustomFieldLocation) {
 
     customField.entry.onChange((_unresolved, resolved) => {
       const next: Record<string, unknown> = resolved ?? {};
-      const previous = latestEntryDataRef.current;
+      const previous = liveFieldOverridesRef.current;
 
       if (config.fieldUidToCategory.size > 0) {
         const changedCategories = new Set<string>();
@@ -254,12 +263,10 @@ export function useValidation(customField: CustomFieldLocation) {
         });
       }
 
-      // `resolved` only carries the schema-defined editable fields, not
-      // entry-level metadata like `uid` — merge onto the last known state
-      // instead of replacing it outright, so uid (captured at mount from
-      // entry.getData()) and anything else `resolved` doesn't repeat stays
-      // in the payload.
-      latestEntryDataRef.current = { ...previous, ...next };
+      // Merge rather than replace — `resolved` only reports the fields
+      // involved in this change, not a full snapshot, so replacing outright
+      // would drop every other field's last known live value.
+      liveFieldOverridesRef.current = { ...previous, ...next };
     });
 
     return () => {

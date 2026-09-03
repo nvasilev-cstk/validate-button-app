@@ -165,15 +165,16 @@ attempting a request.
    changed field uid to its category via `validation_fields`, and — after a 1.5s debounce so
    typing a full sentence doesn't fire a request per keystroke — `POST`s the entry to that one
    category's `validation_urls` endpoint and marks just that category pending.
-   - **Every POST body — manual or auto-triggered — is built from the live entry snapshot
-     handed to `entry.onChange`, not from calling `entry.getData()` at POST time.**
-     `entry.getData()` reflects the last *saved* state, so calling it fresh would send stale
-     data for whichever field the editor just changed but hasn't saved yet — exactly the field
-     the auto-trigger is meant to validate. The hook keeps a ref updated on every `onChange` and
-     sends that. `resolved` only carries the schema-defined editable fields, not entry-level
-     metadata like `uid` — the ref is updated by *merging* each `resolved` snapshot onto the
-     previous one (seeded from `entry.getData()` at mount) rather than replacing it outright, so
-     `uid` and anything else `resolved` doesn't repeat stays present in every payload.
+   - **Every POST body — manual or auto-triggered — is built by `buildEntryPayload()`:**
+     `{ ...entry.getData(), ...liveFieldOverridesRef.current }`. `entry.getData()` is called
+     fresh every time, so entry-level metadata (`uid`, etc. — which `entry.onChange`'s
+     `resolved` argument doesn't carry) is always present and current; it's then overlaid with
+     `liveFieldOverridesRef`, which the `onChange` subscription keeps merged up to date with
+     every live field edit (seeded from `entry.getData()` at mount, then `{ ...previous,
+     ...resolved }` on each change — `resolved` only reports the fields involved in that one
+     change, not a full snapshot, so replacing outright would drop every other field's last
+     known live value). Net effect: the normal, fully-formed entry, with whichever field was
+     just edited substituted for its live, possibly-unsaved value.
 7. **Polling**: all pending categories share one loop (rather than one per category) — it checks
    `statusUrl` every 10 seconds, for up to 18 attempts per category (~3 minutes), and resolves
    each category independently as soon as its feedback field is non-empty. A category joining
