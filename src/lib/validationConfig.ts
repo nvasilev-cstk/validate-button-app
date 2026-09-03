@@ -32,19 +32,27 @@ export interface ValidationConfig {
   authorization: string;
   /** category key -> that category's own validation endpoint */
   categoryUrls: Record<string, string>;
-  /** entry field uid -> the category it belongs to, for the auto-trigger-on-edit watcher */
-  fieldUidToCategory: Map<string, string>;
+  /** entry field path -> the category it belongs to, for the auto-trigger-on-edit watcher */
+  fieldPathToCategory: Map<string, string>;
 }
 
-// validation_fields entries are expected as string arrays, e.g.
+// validation_fields entries are field *paths*, not just top-level uids —
+// a field nested inside a group (or a multi-field group, i.e. an array of
+// group items, like a "credits" group containing an "authors" multi-group)
+// isn't a key on the entry object directly, so it needs a dot path to reach
+// it, e.g. "credits.authors". For a multi-field group, point at the group
+// itself (its whole array), not into a specific item — items can be
+// added/removed/reordered, so there's no stable index to path into; any
+// change anywhere in the array is treated as "this field changed".
+// Entries are expected as string arrays, e.g.
 // `["headline_field_1_uid", "headline_field_2_uid"]`, but tolerate a single
 // comma-joined string in one array slot too (e.g. `["a_uid, b_uid"]`) since
 // that's an easy mistake to make when hand-editing the config JSON.
-function normalizeFieldUidList(raw: unknown): string[] {
+function normalizeFieldPathList(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .flatMap((entry) => (typeof entry === 'string' ? entry.split(',') : []))
-    .map((uid) => uid.trim())
+    .map((path) => path.trim())
     .filter(Boolean);
 }
 
@@ -54,7 +62,7 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
   const validationFields = (cfg.validation_fields as Record<string, unknown> | undefined) ?? {};
 
   const categoryUrls: Record<string, string> = {};
-  const fieldUidToCategory = new Map<string, string>();
+  const fieldPathToCategory = new Map<string, string>();
 
   for (const def of VALIDATION_CATEGORIES) {
     const url = validationUrls[def.urlConfigKey];
@@ -62,8 +70,8 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
       categoryUrls[def.key] = url;
     }
 
-    for (const uid of normalizeFieldUidList(validationFields[def.fieldsConfigKey])) {
-      fieldUidToCategory.set(uid, def.key);
+    for (const path of normalizeFieldPathList(validationFields[def.fieldsConfigKey])) {
+      fieldPathToCategory.set(path, def.key);
     }
   }
 
@@ -73,6 +81,33 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
     apiKey: (cfg.api_key as string | undefined) ?? '',
     authorization: (cfg.authorization as string | undefined) ?? '',
     categoryUrls,
-    fieldUidToCategory,
+    fieldPathToCategory,
   };
+}
+
+// Resolves a dot-path (e.g. "credits.authors") against an entry snapshot.
+// Only walks plain object properties — a path segment is never treated as
+// an array index, since a multi-field group's path should point at the
+// group's whole array (see normalizeFieldPathList above), not into one of
+// its items.
+export function getByPath(obj: unknown, path: string): unknown {
+  return path.split('.').reduce<unknown>((acc, key) => {
+    if (acc === null || typeof acc !== 'object') return undefined;
+    return (acc as Record<string, unknown>)[key];
+  }, obj);
+}
+
+// Reference equality isn't reliable for nested values — a group/array field
+// may come back as a newly-built object on every change regardless of
+// whether its own content actually changed, and could equally be reused
+// unchanged depending on the host's implementation. A JSON-based deep
+// compare is correct either way at the cost of some (negligible, for
+// field-sized data) stringify overhead.
+export function valuesDiffer(a: unknown, b: unknown): boolean {
+  if (a === b) return false;
+  try {
+    return JSON.stringify(a) !== JSON.stringify(b);
+  } catch {
+    return true;
+  }
 }

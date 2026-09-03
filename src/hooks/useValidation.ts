@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CustomFieldLocation } from '../App';
-import { VALIDATION_CATEGORIES, parseValidationConfig } from '../lib/validationConfig';
+import { VALIDATION_CATEGORIES, getByPath, parseValidationConfig, valuesDiffer } from '../lib/validationConfig';
 import {
   buildManagementHeaders,
   extractFeedbackByField,
@@ -242,10 +242,10 @@ export function useValidation(customField: CustomFieldLocation) {
       const next: Record<string, unknown> = resolved ?? {};
       const previous = liveFieldOverridesRef.current;
 
-      if (config.fieldUidToCategory.size > 0) {
+      if (config.fieldPathToCategory.size > 0) {
         const changedCategories = new Set<string>();
-        config.fieldUidToCategory.forEach((categoryKey, uid) => {
-          if (previous[uid] !== next[uid]) {
+        config.fieldPathToCategory.forEach((categoryKey, path) => {
+          if (valuesDiffer(getByPath(previous, path), getByPath(next, path))) {
             changedCategories.add(categoryKey);
           }
         });

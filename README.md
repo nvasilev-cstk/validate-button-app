@@ -108,13 +108,13 @@ config on the field instance when you add the Custom Field to a content type:
     "article_text_check": "https://.../article-text-check"
   },
   "validation_fields": {
-    "headlines": ["headline_field_1_uid", "headline_field_2_uid"],
-    "urls": ["slug_field_uid"],
-    "authors": ["author_field_uid"],
-    "featured_images": ["featured_image_field_uid"],
-    "seos": ["seo_field_uid"],
-    "sections_and_tags": ["field1_uid", "field2_uid"],
-    "article_text": ["article_text_field_uid"]
+    "headlines": ["title"],
+    "urls": ["url"],
+    "authors": ["credits.authors"],
+    "featured_images": ["featured_media.image"],
+    "seos": ["seo"],
+    "sections_and_tags": ["taxonomy.sections", "taxonomy.topics"],
+    "article_text": ["articlebody"]
   }
 }
 ```
@@ -133,11 +133,21 @@ config on the field instance when you add the Custom Field to a content type:
   Each is `POST`ed the full entry JSON when that single category is auto-triggered by a field
   edit. A category missing here just never gets auto-triggered (and isn't touched by the "run
   everything" button either, which only depends on `url`).
-- **`validation_fields`** — which entry field uid(s) belong to each category, used only to
+- **`validation_fields`** — which entry field path(s) belong to each category, used only to
   decide which category to auto-trigger when a field changes. Each value should be an array of
-  field uid strings; a single comma-joined string in one array slot (e.g.
-  `["a_uid, b_uid"]`) is also tolerated and split automatically, but prefer separate array
-  elements.
+  **field paths**, not just top-level uids:
+  - A top-level field (like `title` or `url`) is just its own uid.
+  - A field nested inside a **group** needs a dot path down to it, e.g. `featured_media.image`.
+  - A field nested inside a **multi-field group** (an array of group items — e.g. this schema's
+    `credits.authors`, where each item has its own `author` reference, `alternate_byline`, etc.)
+    should point at the *group itself*, not into one item — e.g. `credits.authors`, not
+    `credits.authors.author` or an indexed path. Items can be added/removed/reordered, so
+    there's no stable index to path into; any change anywhere in the array (a different author,
+    a reordered byline, a new item) is treated as "this field changed" and re-triggers that
+    category. The comparison is a deep (JSON) comparison, not reference equality, so it's
+    correct either way regarding whether the host reuses unchanged sub-objects by reference.
+  - A single comma-joined string in one array slot (e.g. `["a_uid, b_uid"]`) is also tolerated
+    and split automatically, but prefer separate array elements.
 
 If `url` or `statusUrl` is missing, the manual button shows an inline error instead of
 attempting a request.
@@ -161,10 +171,11 @@ attempting a request.
    categories as pending and starts the shared polling loop.
 6. **Auto-trigger per field edit**: `entry.onChange` fires on every real edit (unlike
    `field.onChange`, which only fires on programmatic writes from other apps — not from someone
-   typing in the editor). The hook diffs each change against the previous snapshot, maps any
-   changed field uid to its category via `validation_fields`, and — after a 1.5s debounce so
-   typing a full sentence doesn't fire a request per keystroke — `POST`s the entry to that one
-   category's `validation_urls` endpoint and marks just that category pending.
+   typing in the editor). The hook resolves each `validation_fields` path (via `getByPath`,
+   supporting nested/group fields — see above) against the previous and current snapshot, deep-
+   compares them, maps any changed path to its category, and — after a 1.5s debounce so typing a
+   full sentence doesn't fire a request per keystroke — `POST`s the entry to that one category's
+   `validation_urls` endpoint and marks just that category pending.
    - **Every POST body — manual or auto-triggered — is built by `buildEntryPayload()`:**
      `{ ...entry.getData(), ...liveFieldOverridesRef.current }`. `entry.getData()` is called
      fresh every time, so entry-level metadata (`uid`, etc. — which `entry.onChange`'s
