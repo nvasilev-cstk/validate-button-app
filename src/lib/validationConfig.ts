@@ -32,18 +32,17 @@ export interface ValidationConfig {
   authorization: string;
   /** category key -> that category's own validation endpoint */
   categoryUrls: Record<string, string>;
-  /** entry field path -> the category it belongs to, for the auto-trigger-on-edit watcher */
-  fieldPathToCategory: Map<string, string>;
   /**
-   * Subset of fieldPathToCategory made up of `[]`-wildcarded paths (e.g.
-   * "credits.authors[].author") — the paths that go through a reference
-   * picker inside a multi-field group. entry.onChange only reports those
-   * once the group is collapsed again, not the moment a reference is
-   * picked, so these (and only these) also need the polling fallback in
-   * useValidation.ts. Plain fields already get near-instant onChange
-   * events and don't need polling on top of that.
+   * Entry field path -> the category it belongs to, for the
+   * auto-trigger-on-edit watcher. entry.onChange is the only signal
+   * available for this — entry.getData() was tried as a higher-frequency
+   * fallback for `[]`-wildcarded (reference/multi-field-group) paths, but
+   * turned out to have the exact same limitation: neither reflects an edit
+   * made inside a collapsed Global Field/multi-field group until that
+   * group is collapsed again (or the entry is saved). So all paths, plain
+   * or wildcarded, rely on this one map.
    */
-  referenceFieldPathToCategory: Map<string, string>;
+  fieldPathToCategory: Map<string, string>;
   /** category key -> its configured field paths, for the "is this category filled out" check */
   categoryFieldPaths: Record<string, string[]>;
 }
@@ -81,7 +80,6 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
 
   const categoryUrls: Record<string, string> = {};
   const fieldPathToCategory = new Map<string, string>();
-  const referenceFieldPathToCategory = new Map<string, string>();
   const categoryFieldPaths: Record<string, string[]> = {};
 
   for (const def of VALIDATION_CATEGORIES) {
@@ -94,9 +92,6 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
     categoryFieldPaths[def.key] = paths;
     for (const path of paths) {
       fieldPathToCategory.set(path, def.key);
-      if (path.includes('[]')) {
-        referenceFieldPathToCategory.set(path, def.key);
-      }
     }
   }
 
@@ -107,7 +102,6 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
     authorization: (cfg.authorization as string | undefined) ?? '',
     categoryUrls,
     fieldPathToCategory,
-    referenceFieldPathToCategory,
     categoryFieldPaths,
   };
 }

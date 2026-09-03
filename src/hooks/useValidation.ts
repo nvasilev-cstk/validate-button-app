@@ -313,14 +313,6 @@ export function useValidation(customField: CustomFieldLocation) {
 
       const entryData = buildEntryPayload();
       const results = syncFilledOutState([categoryKey], entryData);
-      // TEMP DEBUG — remove alongside the other TEMP DEBUG logs once
-      // reference-field auto-trigger payloads are confirmed correct.
-      console.log(`[Validation] triggerCategory("${categoryKey}") payload check`, {
-        filledOut: results.get(categoryKey),
-        paths: config.categoryFieldPaths[categoryKey] ?? [],
-        resolvedValues: (config.categoryFieldPaths[categoryKey] ?? []).map((path) => resolvePath(entryData, path)),
-        liveOverrides: liveFieldOverridesRef.current,
-      });
       if (!results.get(categoryKey)) return;
 
       markPending([categoryKey]);
@@ -341,61 +333,36 @@ export function useValidation(customField: CustomFieldLocation) {
     [config, hasSavedEntry, buildEntryPayload, syncFilledOutState, markPending, startPollingIfNeeded]
   );
 
-  // Shared by both change-detection paths below (entry.onChange, and the
-  // polling fallback) so a change is only ever debounced/triggered once no
-  // matter which one notices it first — both read/write the same
-  // liveFieldOverridesRef and debounceTimersRef.
+  // Keeps liveFieldOverridesRef in sync with live edits on every change, and
+  // auto-triggers a category's own check when one of its fields changes,
+  // debounced so a category fires once after the editor pauses rather than
+  // once per keystroke.
+  //
+  // entry.onChange is the only signal used for this. A polling fallback
+  // (calling entry.getData() every 5s) was tried for `[]`-wildcarded
+  // (reference/multi-field-group) paths, on the theory that onChange might
+  // be slower to report those specifically — but testing showed
+  // entry.getData() has the exact same limitation: neither reflects an
+  // edit made inside a collapsed Global Field/multi-field group until that
+  // group is collapsed again (or the entry is saved). So polling never
+  // caught anything onChange wouldn't also catch, just added complexity —
+  // removed. Reference-field auto-trigger only fires once the group is
+  // collapsed; there is currently no available signal for "sooner than that".
   const checkForFieldChanges = useCallback(
-    (next: Record<string, unknown>, source: 'onChange' | 'poll', pathsToCheck: Map<string, string>) => {
+    (next: Record<string, unknown>) => {
       const previous = liveFieldOverridesRef.current;
+      const merged = { ...previous, ...next };
 
-      // entry.onChange's `resolved` reflects genuine live edits, so merging
-      // it in full is safe and correct. The reference-field poll, on the
-      // other hand, calls raw entry.getData() — which reflects the last
-      // *saved* state for anything outside the specific reference paths
-      // being polled — so a blanket merge from that source would silently
-      // revert any other field's live, unsaved edit (e.g. a headline being
-      // typed) back to its saved value the next time the poll ticks.
-      // Restrict the poll's contribution to just the top-level keys it's
-      // actually responsible for.
-      let merged: Record<string, unknown>;
-      if (source === 'poll') {
-        const topLevelKeys = new Set<string>();
-        pathsToCheck.forEach((_categoryKey, path) => {
-          const firstSegment = path.split('.')[0];
-          topLevelKeys.add(firstSegment.endsWith('[]') ? firstSegment.slice(0, -2) : firstSegment);
-        });
-        merged = { ...previous };
-        topLevelKeys.forEach((key) => {
-          if (key in next) merged[key] = next[key];
-        });
-      } else {
-        merged = { ...previous, ...next };
-      }
-
-      if (pathsToCheck.size > 0) {
+      if (config.fieldPathToCategory.size > 0) {
         const changedCategories = new Set<string>();
-        pathsToCheck.forEach((categoryKey, path) => {
+        config.fieldPathToCategory.forEach((categoryKey, path) => {
           const prevValues = resolvePath(previous, path);
           const nextValues = resolvePath(next, path);
           const changed = valuesDiffer(prevValues, nextValues);
           // TEMP DEBUG — remove once field-path watching is confirmed working
           // for nested/multi-field-group paths like "credits.authors[].author".
-          // onChange fires on every keystroke, so it's only logged when it
-          // actually found a change. The reference-field poll only fires
-          // every 5s, so it's cheap to log unconditionally — and doing so is
-          // the whole point right now: it tells us whether entry.getData()
-          // ever reflects a newly-added group item / reference change at
-          // all, as opposed to our diff logic failing to notice one it did
-          // receive.
-          if (changed || source === 'poll') {
-            console.log(`[Validation] (${source}) watch "${path}" (${categoryKey}):`, {
-              prevValues,
-              nextValues,
-              changed,
-            });
-          }
           if (changed) {
+            console.log(`[Validation] watch "${path}" (${categoryKey}): changed`, { prevValues, nextValues });
             changedCategories.add(categoryKey);
           }
         });
@@ -428,52 +395,15 @@ export function useValidation(customField: CustomFieldLocation) {
 
       liveFieldOverridesRef.current = merged;
     },
-    [triggerCategory, syncFilledOutState]
+    [config, triggerCategory, syncFilledOutState]
   );
 
-  // Keeps liveFieldOverridesRef in sync with live edits on every change, and
-  // auto-triggers a category's own check when one of its fields changes,
-  // debounced so a category fires once after the editor pauses rather than
-  // once per keystroke. Watches every configured path — for plain fields
-  // this alone is enough, since onChange fires near-instantly.
   useEffect(() => {
     customField.entry.onChange((_unresolved, resolved) => {
-      checkForFieldChanges(resolved ?? {}, 'onChange', config.fieldPathToCategory);
+      checkForFieldChanges(resolved ?? {});
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customField, config, checkForFieldChanges]);
-
-  // Fallback for reference fields specifically (paths using the `[]`
-  // multi-field-group marker — see referenceFieldPathToCategory), where
-  // entry.onChange doesn't fire until some later UI commit point rather
-  // than immediately: observed with Contentstack only reporting a change
-  // made inside a Global Field/group once that group is collapsed again,
-  // not when a reference is picked inside it. Plain text fields don't have
-  // this problem and are left to onChange alone above — no need to poll
-  // for them too. Polls entry.getData() on the same cadence as the
-  // result-polling loop and runs it through the exact same change-detection
-  // path, so a category only ever fires once regardless of which of the
-  // two notices the change first (they share liveFieldOverridesRef/
-  // debounceTimersRef above).
-  useEffect(() => {
-    if (config.referenceFieldPathToCategory.size === 0) return;
-
-    let cancelled = false;
-
-    const tick = async () => {
-      while (!cancelled) {
-        await wait(POLL_INTERVAL_MS);
-        if (cancelled || !isMounted.current) return;
-        checkForFieldChanges(customField.entry.getData() ?? {}, 'poll', config.referenceFieldPathToCategory);
-      }
-    };
-
-    tick();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [config, customField, checkForFieldChanges]);
+  }, [customField, checkForFieldChanges]);
 
   // Cancel any pending debounced triggers on unmount.
   useEffect(() => {

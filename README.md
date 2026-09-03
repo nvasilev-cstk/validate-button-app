@@ -173,45 +173,32 @@ attempting a request.
    earlier) — no click required.
 5. **Manual trigger**: clicking the button `POST`s the entry to `url`, then marks *all 7*
    categories as pending and starts the shared polling loop.
-6. **Auto-trigger per field edit**: two independent detection paths feed the same
-   `checkForFieldChanges()` function in `useValidation.ts`, so a change only ever fires one
-   trigger no matter which path notices it first (they share the same "last known values" and
-   debounce-timer state):
-   - **`entry.onChange`** fires on every real edit (unlike `field.onChange`, which only fires on
-     programmatic writes from other apps — not from someone typing in the editor), for every
-     configured path. This is the primary, near-instant path, and it's the *only* path for plain
-     (non-`[]`) fields — they don't have the delayed-reporting problem below, so there's no need
-     to also poll for them.
-   - **A 5-second poll of `entry.getData()`** (same cadence as the result-polling loop) covers
-     only the paths in `referenceFieldPathToCategory` — the `[]`-wildcarded ones, e.g.
-     `credits.authors[].author` — as a fallback for reference fields specifically, where
-     `entry.onChange` doesn't fire immediately: observed with Contentstack only reporting a
-     change made inside a Global Field/multi-field group once that group is collapsed again, not
-     the moment a reference is picked inside it. Without this, an `authors_feedback`-style
-     auto-trigger wouldn't fire until the editor happened to collapse that section.
-
-   Either path resolves each `validation_fields` path (via `resolvePath`, supporting
-   nested/group and `[]`-wildcarded multi-field-group paths — see above) against the previous
-   and current snapshot, deep-compares the resulting value sets, maps any changed path to its
-   category, and — after a 1.5s debounce so typing a full sentence doesn't fire a request per
-   keystroke — `POST`s the entry to that one category's `validation_urls` endpoint and marks
+6. **Auto-trigger per field edit**: `entry.onChange` fires on every real edit (unlike
+   `field.onChange`, which only fires on programmatic writes from other apps — not from someone
+   typing in the editor). It resolves each `validation_fields` path (via `resolvePath`,
+   supporting nested/group and `[]`-wildcarded multi-field-group paths — see above) against the
+   previous and current snapshot, deep-compares the resulting value sets, maps any changed path
+   to its category, and — after a 1.5s debounce so typing a full sentence doesn't fire a request
+   per keystroke — `POST`s the entry to that one category's `validation_urls` endpoint and marks
    just that category pending.
+   - **A known limitation, confirmed by testing, not something this app can currently work
+     around:** for a field nested inside a collapsed Global Field/multi-field group (e.g. an
+     "authors" reference), neither `entry.onChange` nor `entry.getData()` reflects the edit
+     until that group is collapsed again (or the entry is saved). A 5-second polling fallback
+     (calling `entry.getData()` on a timer, independent of `onChange`) was tried specifically to
+     get ahead of this, on the theory that `getData()` might update sooner — testing showed it
+     has the exact same limitation, so it was removed. In practice this means: auto-trigger for
+     a reference field inside a group fires once that group is collapsed, not the instant a
+     reference is picked. There is currently no available SDK signal for "sooner than that".
    - **Every POST body — manual or auto-triggered — is built by `buildEntryPayload()`:**
      `{ ...entry.getData(), ...liveFieldOverridesRef.current }`. `entry.getData()` is called
      fresh every time, so entry-level metadata (`uid`, etc. — which `entry.onChange`'s
      `resolved` argument doesn't carry) is always present and current; it's then overlaid with
-     `liveFieldOverridesRef`, kept up to date by `checkForFieldChanges` (shared by both
-     detection paths above) on every change. Net effect: the normal, fully-formed entry, with
-     whichever field was just edited substituted for its live, possibly-unsaved value.
-   - **The two detection paths update `liveFieldOverridesRef` differently, because their inputs
-     have different trust levels.** `entry.onChange`'s `resolved` reflects genuine live edits,
-     so it's merged in full (`{ ...previous, ...resolved }` — merge rather than replace, since
-     `resolved` only reports the fields involved in that one change). The reference-field poll,
-     however, calls raw `entry.getData()`, which reflects the *last saved* state for anything
-     outside the specific reference paths it's polling — so its contribution is restricted to
-     just the top-level keys those paths touch (e.g. `credits`), leaving every other field
-     (e.g. a headline being typed) untouched. Without this distinction, the poll tick would
-     silently revert any other in-progress edit back to its last-saved value every 5 seconds.
+     `liveFieldOverridesRef`, kept up to date by `checkForFieldChanges` by merging in `resolved`
+     on every change (`{ ...previous, ...resolved }` — merge rather than replace, since
+     `resolved` only reports the fields involved in that one change). Net effect: the normal,
+     fully-formed entry, with whichever field was just edited substituted for its live,
+     possibly-unsaved value.
 7. **Emptiness always wins over cached feedback.** `useValidation.ts` tracks two separate,
    independent things per category:
    - `feedback` — a pure cache of whatever the ValidationFeedback entry last reported. It's
