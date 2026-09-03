@@ -340,7 +340,30 @@ export function useValidation(customField: CustomFieldLocation) {
   const checkForFieldChanges = useCallback(
     (next: Record<string, unknown>, source: 'onChange' | 'poll', pathsToCheck: Map<string, string>) => {
       const previous = liveFieldOverridesRef.current;
-      const merged = { ...previous, ...next };
+
+      // entry.onChange's `resolved` reflects genuine live edits, so merging
+      // it in full is safe and correct. The reference-field poll, on the
+      // other hand, calls raw entry.getData() — which reflects the last
+      // *saved* state for anything outside the specific reference paths
+      // being polled — so a blanket merge from that source would silently
+      // revert any other field's live, unsaved edit (e.g. a headline being
+      // typed) back to its saved value the next time the poll ticks.
+      // Restrict the poll's contribution to just the top-level keys it's
+      // actually responsible for.
+      let merged: Record<string, unknown>;
+      if (source === 'poll') {
+        const topLevelKeys = new Set<string>();
+        pathsToCheck.forEach((_categoryKey, path) => {
+          const firstSegment = path.split('.')[0];
+          topLevelKeys.add(firstSegment.endsWith('[]') ? firstSegment.slice(0, -2) : firstSegment);
+        });
+        merged = { ...previous };
+        topLevelKeys.forEach((key) => {
+          if (key in next) merged[key] = next[key];
+        });
+      } else {
+        merged = { ...previous, ...next };
+      }
 
       if (pathsToCheck.size > 0) {
         const changedCategories = new Set<string>();
@@ -386,10 +409,6 @@ export function useValidation(customField: CustomFieldLocation) {
         }
       }
 
-      // Merge rather than replace — `next` (from either source) only
-      // reports the fields involved in that particular update, not a full
-      // snapshot, so replacing outright would drop every other field's
-      // last known live value.
       liveFieldOverridesRef.current = merged;
     },
     [triggerCategory, syncFilledOutState]

@@ -200,12 +200,18 @@ attempting a request.
      `{ ...entry.getData(), ...liveFieldOverridesRef.current }`. `entry.getData()` is called
      fresh every time, so entry-level metadata (`uid`, etc. — which `entry.onChange`'s
      `resolved` argument doesn't carry) is always present and current; it's then overlaid with
-     `liveFieldOverridesRef`, which the `onChange` subscription keeps merged up to date with
-     every live field edit (seeded from `entry.getData()` at mount, then `{ ...previous,
-     ...resolved }` on each change — `resolved` only reports the fields involved in that one
-     change, not a full snapshot, so replacing outright would drop every other field's last
-     known live value). Net effect: the normal, fully-formed entry, with whichever field was
-     just edited substituted for its live, possibly-unsaved value.
+     `liveFieldOverridesRef`, kept up to date by `checkForFieldChanges` (shared by both
+     detection paths above) on every change. Net effect: the normal, fully-formed entry, with
+     whichever field was just edited substituted for its live, possibly-unsaved value.
+   - **The two detection paths update `liveFieldOverridesRef` differently, because their inputs
+     have different trust levels.** `entry.onChange`'s `resolved` reflects genuine live edits,
+     so it's merged in full (`{ ...previous, ...resolved }` — merge rather than replace, since
+     `resolved` only reports the fields involved in that one change). The reference-field poll,
+     however, calls raw `entry.getData()`, which reflects the *last saved* state for anything
+     outside the specific reference paths it's polling — so its contribution is restricted to
+     just the top-level keys those paths touch (e.g. `credits`), leaving every other field
+     (e.g. a headline being typed) untouched. Without this distinction, the poll tick would
+     silently revert any other in-progress edit back to its last-saved value every 5 seconds.
 7. **Emptiness always wins over cached feedback.** `useValidation.ts` tracks two separate,
    independent things per category:
    - `feedback` — a pure cache of whatever the ValidationFeedback entry last reported. It's
