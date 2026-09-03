@@ -29,30 +29,6 @@ function App() {
       });
   }, []);
 
-  // Debug aid: log which top-level field(s) changed on every entry edit.
-  // entry.onChange fires on real user edits (unlike field.onChange, which is
-  // only for programmatic writes from other apps/extensions), but it hands
-  // back the whole entry each time rather than a single field, so we diff
-  // against the previous snapshot ourselves to know what actually changed.
-  // Reference/group/array field values are new objects on every change, so
-  // they'll always log as "changed" even if their contents are identical —
-  // fine for a debug log, not a signal to build real behavior on.
-  useEffect(() => {
-    if (!customField) return;
-    let previous: Record<string, unknown> = customField.entry.getData();
-
-    customField.entry.onChange((_unresolved, resolved) => {
-      const next: Record<string, unknown> = resolved ?? {};
-      const uids = new Set([...Object.keys(previous), ...Object.keys(next)]);
-      for (const uid of uids) {
-        if (previous[uid] !== next[uid]) {
-          console.log(`[FieldWatcher] "${uid}" changed`, { from: previous[uid], to: next[uid] });
-        }
-      }
-      previous = next;
-    });
-  }, [customField]);
-
   if (initError) {
     return <div className="cs-app cs-app--error">{initError}</div>;
   }

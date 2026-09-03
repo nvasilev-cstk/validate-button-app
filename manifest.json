@@ -1,6 +1,6 @@
 {
   "name": "Article Validation Trigger",
-  "description": "Adds a Validation Trigger button as a custom field. Clicking it posts the entry payload to a configurable webhook, then polls a status lookup URL by entry ID until the validation agent's feedback is available.",
+  "description": "Adds a Validation Trigger button as a custom field. It can run all validation categories at once, or auto-trigger a single category when one of its fields is edited, then polls a status lookup URL and displays each category's feedback as it arrives.",
   "icon": "https://www.contentstack.com/favicon.ico",
   "visibility": "private",
   "target_type": "stack",
@@ -21,7 +21,25 @@
               "url": "",
               "statusUrl": "",
               "api_key": "",
-              "authorization": ""
+              "authorization": "",
+              "validation_urls": {
+                "headline_check": "",
+                "url_check": "",
+                "author_check": "",
+                "featured_image_check": "",
+                "seo_check": "",
+                "section_and_tag_check": "",
+                "article_text_check": ""
+              },
+              "validation_fields": {
+                "headlines": [],
+                "urls": [],
+                "authors": [],
+                "featured_images": [],
+                "seos": [],
+                "sections_and_tags": [],
+                "article_text": []
+              }
             }
           }
         ]

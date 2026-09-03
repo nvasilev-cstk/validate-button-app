@@ -138,44 +138,56 @@ body {
   flex-shrink: 0;
 }
 
-.cs-status__markdown {
+.cs-status__content {
   min-width: 0;
 }
 
-.cs-status__markdown > :first-child {
+.cs-status__content > :first-child {
   margin-top: 0;
 }
 
-.cs-status__markdown > :last-child {
+.cs-status__content > :last-child {
   margin-bottom: 0;
 }
 
-.cs-status__markdown p,
-.cs-status__markdown ul,
-.cs-status__markdown ol {
+.cs-status__content p,
+.cs-status__content ul,
+.cs-status__content ol {
   margin: 0 0 6px;
 }
 
-.cs-status__markdown ul,
-.cs-status__markdown ol {
+.cs-status__content ul,
+.cs-status__content ol {
   padding-left: 18px;
 }
 
-.cs-status__markdown code {
+.cs-status__content code {
   background-color: rgba(0, 0, 0, 0.08);
   border-radius: 3px;
   padding: 1px 4px;
   font-size: 11px;
 }
 
-.cs-status__markdown pre {
+.cs-status__content pre {
   background-color: rgba(0, 0, 0, 0.08);
   border-radius: 4px;
   padding: 6px 8px;
   overflow-x: auto;
 }
 
-.cs-status__markdown a {
+.cs-status__content a {
   color: inherit;
   text-decoration: underline;
+}
+
+.cs-status__category-label {
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.cs-status__rechecking {
+  margin-top: 4px;
+  font-size: 11px;
+  font-style: italic;
+  opacity: 0.75;
 }
