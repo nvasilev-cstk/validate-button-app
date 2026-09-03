@@ -170,7 +170,10 @@ attempting a request.
      `entry.getData()` reflects the last *saved* state, so calling it fresh would send stale
      data for whichever field the editor just changed but hasn't saved yet — exactly the field
      the auto-trigger is meant to validate. The hook keeps a ref updated on every `onChange` and
-     sends that.
+     sends that. `resolved` only carries the schema-defined editable fields, not entry-level
+     metadata like `uid` — the ref is updated by *merging* each `resolved` snapshot onto the
+     previous one (seeded from `entry.getData()` at mount) rather than replacing it outright, so
+     `uid` and anything else `resolved` doesn't repeat stays present in every payload.
 7. **Polling**: all pending categories share one loop (rather than one per category) — it checks
    `statusUrl` every 10 seconds, for up to 18 attempts per category (~3 minutes), and resolves
    each category independently as soon as its feedback field is non-empty. A category joining

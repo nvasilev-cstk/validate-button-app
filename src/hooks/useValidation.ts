@@ -254,7 +254,12 @@ export function useValidation(customField: CustomFieldLocation) {
         });
       }
 
-      latestEntryDataRef.current = next;
+      // `resolved` only carries the schema-defined editable fields, not
+      // entry-level metadata like `uid` — merge onto the last known state
+      // instead of replacing it outright, so uid (captured at mount from
+      // entry.getData()) and anything else `resolved` doesn't repeat stays
+      // in the payload.
+      latestEntryDataRef.current = { ...previous, ...next };
     });
 
     return () => {
