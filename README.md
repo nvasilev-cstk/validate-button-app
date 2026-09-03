@@ -157,14 +157,20 @@ attempting a request.
 4. **On first render** (once there's a saved uid), it does a single, silent status check and
    shows any feedback that already exists (e.g. the editor reopened an entry that was validated
    earlier) — no click required.
-5. **Manual trigger**: clicking the button `POST`s the full entry to `url`, then marks *all 7*
+5. **Manual trigger**: clicking the button `POST`s the entry to `url`, then marks *all 7*
    categories as pending and starts the shared polling loop.
 6. **Auto-trigger per field edit**: `entry.onChange` fires on every real edit (unlike
    `field.onChange`, which only fires on programmatic writes from other apps — not from someone
    typing in the editor). The hook diffs each change against the previous snapshot, maps any
    changed field uid to its category via `validation_fields`, and — after a 1.5s debounce so
-   typing a full sentence doesn't fire a request per keystroke — `POST`s the full entry to that
-   one category's `validation_urls` endpoint and marks just that category pending.
+   typing a full sentence doesn't fire a request per keystroke — `POST`s the entry to that one
+   category's `validation_urls` endpoint and marks just that category pending.
+   - **Every POST body — manual or auto-triggered — is built from the live entry snapshot
+     handed to `entry.onChange`, not from calling `entry.getData()` at POST time.**
+     `entry.getData()` reflects the last *saved* state, so calling it fresh would send stale
+     data for whichever field the editor just changed but hasn't saved yet — exactly the field
+     the auto-trigger is meant to validate. The hook keeps a ref updated on every `onChange` and
+     sends that.
 7. **Polling**: all pending categories share one loop (rather than one per category) — it checks
    `statusUrl` every 10 seconds, for up to 18 attempts per category (~3 minutes), and resolves
    each category independently as soon as its feedback field is non-empty. A category joining

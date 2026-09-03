@@ -53,6 +53,14 @@ export function useValidation(customField: CustomFieldLocation) {
   const pendingAttemptsRef = useRef<Map<string, number>>(new Map());
   const isPollingRef = useRef(false);
 
+  // entry.getData() reflects the last *saved* state, not live edits — so it's
+  // wrong to call it right before POSTing (the whole point of auto-triggering
+  // on a field edit is to send the value that was just typed, which may not
+  // be saved yet). entry.onChange's `resolved` argument is the one that's
+  // actually live, so every POST payload is built from this ref instead,
+  // kept in sync by the single onChange subscription below.
+  const latestEntryDataRef = useRef<Record<string, unknown>>(customField.entry.getData() ?? {});
+
   useEffect(() => {
     customField.entry.onSave((savedEntry) => {
       if (isMounted.current && savedEntry?.uid) {
@@ -176,7 +184,7 @@ export function useValidation(customField: CustomFieldLocation) {
     setIsTriggeringAll(true);
 
     try {
-      await postEntryForValidation(config.triggerUrl, customField.entry.getData());
+      await postEntryForValidation(config.triggerUrl, latestEntryDataRef.current);
     } catch (err) {
       if (isMounted.current) {
         setIsTriggeringAll(false);
@@ -189,7 +197,7 @@ export function useValidation(customField: CustomFieldLocation) {
     setIsTriggeringAll(false);
     markPending(VALIDATION_CATEGORIES.map((def) => def.key));
     startPollingIfNeeded();
-  }, [hasSavedEntry, config, customField, markPending, startPollingIfNeeded]);
+  }, [hasSavedEntry, config, markPending, startPollingIfNeeded]);
 
   const triggerCategory = useCallback(
     async (categoryKey: string) => {
@@ -199,7 +207,7 @@ export function useValidation(customField: CustomFieldLocation) {
       markPending([categoryKey]);
 
       try {
-        await postEntryForValidation(url, customField.entry.getData());
+        await postEntryForValidation(url, latestEntryDataRef.current);
       } catch (err) {
         console.error(`[Validation] Failed to auto-trigger "${categoryKey}"`, err);
         if (isMounted.current) {
@@ -211,40 +219,42 @@ export function useValidation(customField: CustomFieldLocation) {
 
       startPollingIfNeeded();
     },
-    [config, hasSavedEntry, customField, markPending, startPollingIfNeeded]
+    [config, hasSavedEntry, markPending, startPollingIfNeeded]
   );
 
-  // Auto-trigger a category's own check when one of its fields is edited,
+  // Keeps latestEntryDataRef in sync with live edits on every change, and
+  // auto-triggers a category's own check when one of its fields changes,
   // debounced so a category fires once after the editor pauses rather than
   // once per keystroke.
   useEffect(() => {
-    if (config.fieldUidToCategory.size === 0) return;
-
-    let previous: Record<string, unknown> = customField.entry.getData() ?? {};
     const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
     customField.entry.onChange((_unresolved, resolved) => {
       const next: Record<string, unknown> = resolved ?? {};
-      const changedCategories = new Set<string>();
+      const previous = latestEntryDataRef.current;
 
-      config.fieldUidToCategory.forEach((categoryKey, uid) => {
-        if (previous[uid] !== next[uid]) {
-          changedCategories.add(categoryKey);
-        }
-      });
-      previous = next;
+      if (config.fieldUidToCategory.size > 0) {
+        const changedCategories = new Set<string>();
+        config.fieldUidToCategory.forEach((categoryKey, uid) => {
+          if (previous[uid] !== next[uid]) {
+            changedCategories.add(categoryKey);
+          }
+        });
 
-      changedCategories.forEach((categoryKey) => {
-        const existingTimer = debounceTimers.get(categoryKey);
-        if (existingTimer) clearTimeout(existingTimer);
-        debounceTimers.set(
-          categoryKey,
-          setTimeout(() => {
-            debounceTimers.delete(categoryKey);
-            triggerCategory(categoryKey);
-          }, FIELD_CHANGE_DEBOUNCE_MS)
-        );
-      });
+        changedCategories.forEach((categoryKey) => {
+          const existingTimer = debounceTimers.get(categoryKey);
+          if (existingTimer) clearTimeout(existingTimer);
+          debounceTimers.set(
+            categoryKey,
+            setTimeout(() => {
+              debounceTimers.delete(categoryKey);
+              triggerCategory(categoryKey);
+            }, FIELD_CHANGE_DEBOUNCE_MS)
+          );
+        });
+      }
+
+      latestEntryDataRef.current = next;
     });
 
     return () => {
