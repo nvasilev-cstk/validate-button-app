@@ -110,7 +110,7 @@ config on the field instance when you add the Custom Field to a content type:
   "validation_fields": {
     "headlines": ["title"],
     "urls": ["url"],
-    "authors": ["credits.authors"],
+    "authors": ["credits.authors[].author"],
     "featured_images": ["featured_media.image"],
     "seos": ["seo"],
     "sections_and_tags": ["taxonomy.sections", "taxonomy.topics"],
@@ -135,17 +135,21 @@ config on the field instance when you add the Custom Field to a content type:
   everything" button either, which only depends on `url`).
 - **`validation_fields`** — which entry field path(s) belong to each category, used only to
   decide which category to auto-trigger when a field changes. Each value should be an array of
-  **field paths**, not just top-level uids:
+  **field paths**, not just top-level uids, resolved by `resolvePath` in
+  [`src/lib/validationConfig.ts`](src/lib/validationConfig.ts):
   - A top-level field (like `title` or `url`) is just its own uid.
   - A field nested inside a **group** needs a dot path down to it, e.g. `featured_media.image`.
   - A field nested inside a **multi-field group** (an array of group items — e.g. this schema's
     `credits.authors`, where each item has its own `author` reference, `alternate_byline`, etc.)
-    should point at the *group itself*, not into one item — e.g. `credits.authors`, not
-    `credits.authors.author` or an indexed path. Items can be added/removed/reordered, so
-    there's no stable index to path into; any change anywhere in the array (a different author,
-    a reordered byline, a new item) is treated as "this field changed" and re-triggers that
-    category. The comparison is a deep (JSON) comparison, not reference equality, so it's
-    correct either way regarding whether the host reuses unchanged sub-objects by reference.
+    needs a `[]` marker on the array segment to reach into every item's field, e.g.
+    `credits.authors[].author`. This resolves to one value per item in the array (an empty
+    array if there are no items yet), and a change to *any* of them — a different author, a
+    reordered/added/removed item — is treated as "this field changed" and re-triggers that
+    category. Without the `[]` marker (just `credits.authors`), the path resolves to the whole
+    array as one value instead — still valid, just coarser (any change anywhere in the group,
+    including fields you may not care about like `alternate_byline`, would count). Either way
+    the comparison is a deep (JSON) comparison, not reference equality, so it's correct
+    regardless of whether the host reuses unchanged sub-objects by reference.
   - A single comma-joined string in one array slot (e.g. `["a_uid, b_uid"]`) is also tolerated
     and split automatically, but prefer separate array elements.
 
@@ -171,10 +175,11 @@ attempting a request.
    categories as pending and starts the shared polling loop.
 6. **Auto-trigger per field edit**: `entry.onChange` fires on every real edit (unlike
    `field.onChange`, which only fires on programmatic writes from other apps — not from someone
-   typing in the editor). The hook resolves each `validation_fields` path (via `getByPath`,
-   supporting nested/group fields — see above) against the previous and current snapshot, deep-
-   compares them, maps any changed path to its category, and — after a 1.5s debounce so typing a
-   full sentence doesn't fire a request per keystroke — `POST`s the entry to that one category's
+   typing in the editor). The hook resolves each `validation_fields` path (via `resolvePath`,
+   supporting nested/group and `[]`-wildcarded multi-field-group paths — see above) against the
+   previous and current snapshot, deep-compares the resulting value sets, maps any changed path
+   to its category, and — after a 1.5s debounce so typing a full sentence doesn't fire a request
+   per keystroke — `POST`s the entry to that one category's
    `validation_urls` endpoint and marks just that category pending.
    - **Every POST body — manual or auto-triggered — is built by `buildEntryPayload()`:**
      `{ ...entry.getData(), ...liveFieldOverridesRef.current }`. `entry.getData()` is called

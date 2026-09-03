@@ -37,13 +37,19 @@ export interface ValidationConfig {
 }
 
 // validation_fields entries are field *paths*, not just top-level uids —
-// a field nested inside a group (or a multi-field group, i.e. an array of
-// group items, like a "credits" group containing an "authors" multi-group)
-// isn't a key on the entry object directly, so it needs a dot path to reach
-// it, e.g. "credits.authors". For a multi-field group, point at the group
-// itself (its whole array), not into a specific item — items can be
-// added/removed/reordered, so there's no stable index to path into; any
-// change anywhere in the array is treated as "this field changed".
+// a field nested inside a group isn't a key on the entry object directly,
+// so it needs a dot path to reach it, e.g. "featured_media.image". A field
+// nested inside a *multi-field group* (an array of group items, like a
+// "credits" group containing an "authors" multi-group, each item having its
+// own "author" reference) needs a `[]` marker on the array segment to reach
+// into every item, e.g. "credits.authors[].author" — this resolves to one
+// value per item in the array (see resolvePath below), and a change in any
+// of them counts as "this field changed". Without the `[]` marker (e.g. just
+// "credits.authors"), the path resolves to the whole array as a single
+// value, and only a change to the array itself (not into what's inside it)
+// would normally be picked up by identity — resolvePath still uses a deep
+// compare either way, so both forms work, but `[]` is the precise one when
+// what you actually care about is one specific field inside each item.
 // Entries are expected as string arrays, e.g.
 // `["headline_field_1_uid", "headline_field_2_uid"]`, but tolerate a single
 // comma-joined string in one array slot too (e.g. `["a_uid, b_uid"]`) since
@@ -85,24 +91,49 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
   };
 }
 
-// Resolves a dot-path (e.g. "credits.authors") against an entry snapshot.
-// Only walks plain object properties — a path segment is never treated as
-// an array index, since a multi-field group's path should point at the
-// group's whole array (see normalizeFieldPathList above), not into one of
-// its items.
-export function getByPath(obj: unknown, path: string): unknown {
-  return path.split('.').reduce<unknown>((acc, key) => {
-    if (acc === null || typeof acc !== 'object') return undefined;
-    return (acc as Record<string, unknown>)[key];
-  }, obj);
+interface PathSegment {
+  key: string;
+  /** true when this segment was written as "key[]" — map over the array at this key. */
+  isArray: boolean;
 }
 
-// Reference equality isn't reliable for nested values — a group/array field
-// may come back as a newly-built object on every change regardless of
-// whether its own content actually changed, and could equally be reused
-// unchanged depending on the host's implementation. A JSON-based deep
-// compare is correct either way at the cost of some (negligible, for
-// field-sized data) stringify overhead.
+function parsePath(path: string): PathSegment[] {
+  return path.split('.').map((raw) => {
+    const isArray = raw.endsWith('[]');
+    return { key: isArray ? raw.slice(0, -2) : raw, isArray };
+  });
+}
+
+function resolveSegments(obj: unknown, segments: PathSegment[]): unknown[] {
+  if (obj === null || typeof obj !== 'object') return [];
+  if (segments.length === 0) return [obj];
+
+  const [{ key, isArray }, ...rest] = segments;
+  const value = (obj as Record<string, unknown>)[key];
+
+  if (isArray) {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item) => resolveSegments(item, rest));
+  }
+
+  return rest.length === 0 ? [value] : resolveSegments(value, rest);
+}
+
+// Resolves a dot-path against an entry snapshot, e.g. "featured_media.image"
+// or, with a `[]` marker to map over a multi-field group's array,
+// "credits.authors[].author". Always returns an array of matched values —
+// one value for a plain path, one per array item for a `[]` path, and an
+// empty array if any segment along the way is missing.
+export function resolvePath(obj: unknown, path: string): unknown[] {
+  return resolveSegments(obj, parsePath(path));
+}
+
+// Reference equality isn't reliable for nested/array values — they may come
+// back as newly-built objects on every change regardless of whether their
+// own content actually changed, and could equally be reused unchanged
+// depending on the host's implementation. A JSON-based deep compare is
+// correct either way, at the cost of some (negligible, for field-sized
+// data) stringify overhead.
 export function valuesDiffer(a: unknown, b: unknown): boolean {
   if (a === b) return false;
   try {

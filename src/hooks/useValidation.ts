@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CustomFieldLocation } from '../App';
-import { VALIDATION_CATEGORIES, getByPath, parseValidationConfig, valuesDiffer } from '../lib/validationConfig';
+import { VALIDATION_CATEGORIES, parseValidationConfig, resolvePath, valuesDiffer } from '../lib/validationConfig';
 import {
   buildManagementHeaders,
   extractFeedbackByField,
@@ -258,12 +258,12 @@ export function useValidation(customField: CustomFieldLocation) {
       if (config.fieldPathToCategory.size > 0) {
         const changedCategories = new Set<string>();
         config.fieldPathToCategory.forEach((categoryKey, path) => {
-          const prevValue = getByPath(previous, path);
-          const nextValue = getByPath(next, path);
-          const changed = valuesDiffer(prevValue, nextValue);
+          const prevValues = resolvePath(previous, path);
+          const nextValues = resolvePath(next, path);
+          const changed = valuesDiffer(prevValues, nextValues);
           // TEMP DEBUG — remove once field-path watching is confirmed working
-          // for nested/multi-field-group paths like "credits.authors".
-          console.log(`[Validation] watch "${path}" (${categoryKey}):`, { prevValue, nextValue, changed });
+          // for nested/multi-field-group paths like "credits.authors[].author".
+          console.log(`[Validation] watch "${path}" (${categoryKey}):`, { prevValues, nextValues, changed });
           if (changed) {
             changedCategories.add(categoryKey);
           }
