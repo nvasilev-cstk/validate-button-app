@@ -186,20 +186,18 @@ entry shaped like:
 |-------------------------------|----------------------------------|---------------------------------------------|
 | Title                          | `title`                          | required, unique                              |
 | EntryID                        | `entryid`                        | the `uid` of the entry that was validated     |
-| Headline Feedback              | `headline_feedback`              | JSON RTE (Advanced) — HTML feedback           |
-| URL Feedback                   | `url_feedback`                   | JSON RTE (Advanced) — HTML feedback           |
-| Authors Feedback               | `authors_feedback`               | JSON RTE (Advanced) — HTML feedback           |
-| Featured Image Feedback        | `featured_image_feedback`        | JSON RTE (Advanced) — HTML feedback           |
-| SEO Feedback                   | `seo_feedback`                   | JSON RTE (Advanced) — HTML feedback           |
-| Sections and Tags Feedback     | `sections_and_tags_feedback`     | JSON RTE (Advanced) — HTML feedback           |
-| Article Text Feedback          | `article_text_feedback`          | JSON RTE (Advanced) — HTML feedback           |
+| Headline Feedback              | `headline_feedback`              | Text — HTML feedback                          |
+| URL Feedback                   | `url_feedback`                   | Text — HTML feedback                          |
+| Authors Feedback               | `authors_feedback`               | Text — HTML feedback                          |
+| Featured Image Feedback        | `featured_image_feedback`        | Text — HTML feedback                          |
+| SEO Feedback                   | `seo_feedback`                   | Text — HTML feedback                          |
+| Sections and Tags Feedback     | `sections_and_tags_feedback`     | Text — HTML feedback                          |
+| Article Text Feedback          | `article_text_feedback`          | Text — HTML feedback                          |
 
-Each `*_feedback` field is rendered via `@contentstack/utils`'s `jsonToHTML` (the official
-converter for Contentstack's JSON RTE document format) and then sanitized with `DOMPurify`
-before being injected as HTML. A plain HTML string in the same field is also accepted as a
-fallback (used as-is, just sanitized) in case a field ever contains raw HTML instead of a proper
-JSON RTE document. Only fields with actual content are rendered — an empty/missing feedback
-field for a category is omitted, per spec.
+Each `*_feedback` field is a plain text field whose value is expected to already be an HTML
+string (not JSON RTE) — it's sanitized with `DOMPurify` and injected as-is. Only fields with
+actual content are rendered — an empty/missing feedback field for a category is omitted, per
+spec.
 
 The legacy `feedback`/`markdown` text fields on this content type (from an earlier version of
 this schema) are no longer read by the app — feedback is now sourced entirely from the 7
@@ -218,7 +216,6 @@ refresh manually.
 ## Dependencies
 
 - `@contentstack/app-sdk` — Contentstack App Framework SDK (location, entry, field APIs)
-- `@contentstack/utils` — converts JSON RTE (Advanced) field content to HTML
-- `dompurify` — sanitizes HTML before it's injected into the page
+- `dompurify` — sanitizes each feedback field's HTML string before it's injected into the page
 - `react` / `react-dom` — UI
 - `lucide-react` — icons (spinner, success/error/shield icons)

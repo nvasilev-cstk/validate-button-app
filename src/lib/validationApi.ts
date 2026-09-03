@@ -1,5 +1,4 @@
 import DOMPurify from 'dompurify';
-import { jsonToHTML, type EntryEmbedable } from '@contentstack/utils';
 
 // Contentstack's Management API expects these two headers on every request.
 export function buildManagementHeaders(apiKey: string, authorization: string): HeadersInit {
@@ -66,30 +65,13 @@ export async function fetchFeedbackEntry(
   }
 }
 
-// Each feedback field's value may be a Contentstack JSON RTE (Advanced)
-// document, or a plain HTML string. Converts whichever is present at each
-// given field uid into sanitized HTML, safe for dangerouslySetInnerHTML.
-// Fields with no content (or that fail to convert) are omitted from the result.
+// Each feedback field is a plain text field containing an HTML string.
+// Sanitizes whichever fields are present into HTML safe for
+// dangerouslySetInnerHTML; empty/missing fields are omitted from the result.
 export function extractFeedbackHtmlByField(entry: FeedbackEntry, fieldUids: string[]): Record<string, string> {
-  const mutable: FeedbackEntry = { ...entry };
-  const jsonRtePaths = fieldUids.filter((uid) => {
-    const value = entry[uid];
-    return value !== null && typeof value === 'object';
-  });
-
-  if (jsonRtePaths.length > 0) {
-    try {
-      // jsonToHTML's entry type requires a `uid`, which every real
-      // Contentstack entry has — the FeedbackEntry type just doesn't say so.
-      jsonToHTML({ entry: mutable as unknown as EntryEmbedable, paths: jsonRtePaths });
-    } catch (err) {
-      console.error('[Validation] Failed to convert JSON RTE feedback to HTML', err);
-    }
-  }
-
   const result: Record<string, string> = {};
   for (const uid of fieldUids) {
-    const value = mutable[uid];
+    const value = entry[uid];
     if (typeof value === 'string' && value.trim()) {
       result[uid] = DOMPurify.sanitize(value);
     }
