@@ -49,6 +49,10 @@ export function useValidation(customField: CustomFieldLocation) {
   }, []);
 
   const [hasSavedEntry, setHasSavedEntry] = useState(() => Boolean(customField.entry.getData()?.uid));
+  // Pure cache of whatever the ValidationFeedback entry last reported for
+  // each category — never synthesized/overwritten with a local message.
+  // "Is this category actually ready to show that" is a separate concern,
+  // handled by isFilledOutByCategory below.
   const [feedback, setFeedback] = useState<Record<string, CategoryFeedback>>({});
   const [categoryState, setCategoryState] = useState<Record<string, CategoryState>>({});
   const [isTriggeringAll, setIsTriggeringAll] = useState(false);
@@ -58,6 +62,7 @@ export function useValidation(customField: CustomFieldLocation) {
   // anything still pending" — categoryState is just its UI reflection.
   const pendingAttemptsRef = useRef<Map<string, number>>(new Map());
   const isPollingRef = useRef(false);
+  const debounceTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   // entry.getData() reflects the last *saved* state for field values — wrong
   // to send as-is right after an edit — but it's the only reliable source
@@ -76,6 +81,79 @@ export function useValidation(customField: CustomFieldLocation) {
     return { ...customField.entry.getData(), ...liveFieldOverridesRef.current };
   }, [customField]);
 
+  // Whether each category's configured fields currently have real content,
+  // independent of anything fetched from the ValidationFeedback entry —
+  // this is what the UI checks *first*, before ever looking at `feedback`,
+  // so an empty field always shows "needs to be filled out" regardless of
+  // whatever (possibly stale) report happens to be cached for it. Seeded
+  // from the entry's state at mount so this is correct immediately, even
+  // for an entry reopened with a field that was already emptied in an
+  // earlier session (nothing needs to change this tick for it to be right).
+  const [isFilledOutByCategory, setIsFilledOutByCategory] = useState<Record<string, boolean>>(() => {
+    const entryData = customField.entry.getData() ?? {};
+    const initial: Record<string, boolean> = {};
+    for (const def of VALIDATION_CATEGORIES) {
+      initial[def.key] = isCategoryFilledOut(entryData, config.categoryFieldPaths[def.key] ?? []);
+    }
+    return initial;
+  });
+
+  // Recomputes isFilledOutByCategory for the given categories against a
+  // given entry snapshot, and returns the results so callers can act on
+  // them immediately without waiting for the state update to land. Any
+  // category that comes back empty also has its pending/debounce state
+  // cleared — there's no point waiting on (or debouncing a trigger for) a
+  // category we now know can't be validated.
+  const syncFilledOutState = useCallback(
+    (categoryKeys: string[], entryData: Record<string, unknown>): Map<string, boolean> => {
+      const results = new Map<string, boolean>();
+      for (const key of categoryKeys) {
+        results.set(key, isCategoryFilledOut(entryData, config.categoryFieldPaths[key] ?? []));
+      }
+
+      setIsFilledOutByCategory((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        results.forEach((filled, key) => {
+          if (next[key] !== filled) {
+            next[key] = filled;
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+
+      const emptiedKeys: string[] = [];
+      results.forEach((filled, key) => {
+        if (filled) return;
+        emptiedKeys.push(key);
+        pendingAttemptsRef.current.delete(key);
+        const existingTimer = debounceTimersRef.current.get(key);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+          debounceTimersRef.current.delete(key);
+        }
+      });
+
+      if (emptiedKeys.length > 0) {
+        setCategoryState((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          emptiedKeys.forEach((key) => {
+            if (next[key] && next[key] !== 'idle') {
+              next[key] = 'idle';
+              changed = true;
+            }
+          });
+          return changed ? next : prev;
+        });
+      }
+
+      return results;
+    },
+    [config]
+  );
+
   useEffect(() => {
     customField.entry.onSave((savedEntry) => {
       if (isMounted.current && savedEntry?.uid) {
@@ -85,60 +163,40 @@ export function useValidation(customField: CustomFieldLocation) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customField]);
 
-  // `mode: 'initial'` (the one-shot check on mount) merges in whatever's
-  // found for every category — `feedback` is still empty at that point, so
-  // there's nothing to clobber. `mode: 'poll'` (every tick of the shared
-  // polling loop) only merges categories that are actually pending right
-  // now — otherwise a poll running for some *other* still-pending category
-  // would blindly re-fetch and overwrite an already-resolved category (e.g.
-  // one just locally set to "needs to be filled out" after an author was
-  // removed) with whatever stale result is still sitting in the
-  // ValidationFeedback entry from its last real run.
-  const refreshFeedback = useCallback(
-    async (mode: 'initial' | 'poll' = 'poll') => {
-      if (!config.statusUrl) return;
-      const entryUid = customField.entry.getData()?.uid;
-      if (!entryUid) return;
+  const refreshFeedback = useCallback(async () => {
+    if (!config.statusUrl) return;
+    const entryUid = customField.entry.getData()?.uid;
+    if (!entryUid) return;
 
-      const feedbackEntry = await fetchFeedbackEntry(config.statusUrl, entryUid, managementHeaders);
-      if (!feedbackEntry || !isMounted.current) return;
+    const feedbackEntry = await fetchFeedbackEntry(config.statusUrl, entryUid, managementHeaders);
+    if (!feedbackEntry || !isMounted.current) return;
 
-      const byField = extractFeedbackByField(feedbackEntry, feedbackFieldUids);
+    const byField = extractFeedbackByField(feedbackEntry, feedbackFieldUids);
+    if (Object.keys(byField).length > 0) {
+      setFeedback((prev) => ({ ...prev, ...byField }));
+    }
 
-      const relevantByField: Record<string, CategoryFeedback> = {};
+    setCategoryState((prev) => {
+      let changed = false;
+      const next = { ...prev };
       for (const def of VALIDATION_CATEGORIES) {
-        const value = byField[def.feedbackFieldUid];
-        if (!value) continue;
-        if (mode === 'initial' || pendingAttemptsRef.current.has(def.key)) {
-          relevantByField[def.feedbackFieldUid] = value;
+        if (pendingAttemptsRef.current.has(def.key) && byField[def.feedbackFieldUid]) {
+          pendingAttemptsRef.current.delete(def.key);
+          next[def.key] = 'idle';
+          changed = true;
         }
       }
-
-      if (Object.keys(relevantByField).length > 0) {
-        setFeedback((prev) => ({ ...prev, ...relevantByField }));
-      }
-
-      setCategoryState((prev) => {
-        let changed = false;
-        const next = { ...prev };
-        for (const def of VALIDATION_CATEGORIES) {
-          if (pendingAttemptsRef.current.has(def.key) && byField[def.feedbackFieldUid]) {
-            pendingAttemptsRef.current.delete(def.key);
-            next[def.key] = 'idle';
-            changed = true;
-          }
-        }
-        return changed ? next : prev;
-      });
-    },
-    [config, customField, managementHeaders, feedbackFieldUids]
-  );
+      return changed ? next : prev;
+    });
+  }, [config, customField, managementHeaders, feedbackFieldUids]);
 
   // If validation has already run for this entry (e.g. the editor reopened
-  // it after a previous trigger), show existing feedback immediately.
+  // it after a previous trigger), show existing feedback immediately. Any
+  // category that's currently empty will still be hidden behind the
+  // isFilledOutByCategory gate regardless of what this finds.
   useEffect(() => {
     if (!hasSavedEntry) return;
-    refreshFeedback('initial');
+    refreshFeedback();
     // Only ever check once, right after the entry has a uid.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasSavedEntry]);
@@ -207,32 +265,6 @@ export function useValidation(customField: CustomFieldLocation) {
     });
   }, []);
 
-  // A category whose configured fields are empty is shown a local "needs to
-  // be filled out" message instead of being sent for validation at all — no
-  // network call, no waiting/polling for it. Also clears any pending state
-  // left over from an earlier still-in-flight trigger for this category —
-  // otherwise the next poll tick would still treat it as pending, find the
-  // old (now stale) result still sitting in the ValidationFeedback entry,
-  // and silently overwrite this message with it.
-  const showIncompleteMessage = useCallback((categoryKey: string) => {
-    const def = VALIDATION_CATEGORIES.find((c) => c.key === categoryKey);
-    if (!def) return;
-    pendingAttemptsRef.current.delete(categoryKey);
-    setFeedback((prev) => ({
-      ...prev,
-      [def.feedbackFieldUid]: {
-        group: def.label,
-        findings: [
-          {
-            status: 'incomplete',
-            label: `${def.label} needs to be filled out before it can be validated.`,
-          },
-        ],
-      },
-    }));
-    setCategoryState((prev) => ({ ...prev, [categoryKey]: 'idle' }));
-  }, []);
-
   const triggerAll = useCallback(async () => {
     if (!hasSavedEntry) {
       setGlobalError('Save this entry before running validation.');
@@ -246,14 +278,11 @@ export function useValidation(customField: CustomFieldLocation) {
     setGlobalError('');
 
     const entryData = buildEntryPayload();
-    const readyCategories: string[] = [];
-    for (const def of VALIDATION_CATEGORIES) {
-      if (isCategoryFilledOut(entryData, config.categoryFieldPaths[def.key] ?? [])) {
-        readyCategories.push(def.key);
-      } else {
-        showIncompleteMessage(def.key);
-      }
-    }
+    const results = syncFilledOutState(
+      VALIDATION_CATEGORIES.map((def) => def.key),
+      entryData
+    );
+    const readyCategories = VALIDATION_CATEGORIES.filter((def) => results.get(def.key)).map((def) => def.key);
 
     // Nothing ready to validate — skip the network call entirely rather
     // than asking the orchestrator to check fields we already know are empty.
@@ -275,7 +304,7 @@ export function useValidation(customField: CustomFieldLocation) {
     setIsTriggeringAll(false);
     markPending(readyCategories);
     startPollingIfNeeded();
-  }, [hasSavedEntry, config, buildEntryPayload, showIncompleteMessage, markPending, startPollingIfNeeded]);
+  }, [hasSavedEntry, config, buildEntryPayload, syncFilledOutState, markPending, startPollingIfNeeded]);
 
   const triggerCategory = useCallback(
     async (categoryKey: string) => {
@@ -283,10 +312,8 @@ export function useValidation(customField: CustomFieldLocation) {
       if (!hasSavedEntry || !url) return;
 
       const entryData = buildEntryPayload();
-      if (!isCategoryFilledOut(entryData, config.categoryFieldPaths[categoryKey] ?? [])) {
-        showIncompleteMessage(categoryKey);
-        return;
-      }
+      const results = syncFilledOutState([categoryKey], entryData);
+      if (!results.get(categoryKey)) return;
 
       markPending([categoryKey]);
 
@@ -303,18 +330,17 @@ export function useValidation(customField: CustomFieldLocation) {
 
       startPollingIfNeeded();
     },
-    [config, hasSavedEntry, buildEntryPayload, showIncompleteMessage, markPending, startPollingIfNeeded]
+    [config, hasSavedEntry, buildEntryPayload, syncFilledOutState, markPending, startPollingIfNeeded]
   );
 
   // Shared by both change-detection paths below (entry.onChange, and the
   // polling fallback) so a change is only ever debounced/triggered once no
   // matter which one notices it first — both read/write the same
   // liveFieldOverridesRef and debounceTimersRef.
-  const debounceTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-
   const checkForFieldChanges = useCallback(
     (next: Record<string, unknown>, source: 'onChange' | 'poll', pathsToCheck: Map<string, string>) => {
       const previous = liveFieldOverridesRef.current;
+      const merged = { ...previous, ...next };
 
       if (pathsToCheck.size > 0) {
         const changedCategories = new Set<string>();
@@ -334,26 +360,39 @@ export function useValidation(customField: CustomFieldLocation) {
           }
         });
 
-        changedCategories.forEach((categoryKey) => {
-          const existingTimer = debounceTimersRef.current.get(categoryKey);
-          if (existingTimer) clearTimeout(existingTimer);
-          debounceTimersRef.current.set(
-            categoryKey,
-            setTimeout(() => {
-              debounceTimersRef.current.delete(categoryKey);
-              triggerCategory(categoryKey);
-            }, FIELD_CHANGE_DEBOUNCE_MS)
-          );
-        });
+        if (changedCategories.size > 0) {
+          // Update isFilledOutByCategory (and clean up pending/debounce
+          // state for any category that just became empty) immediately —
+          // this doesn't need the debounce below, since it's just a local
+          // UI decision, not a network call.
+          const results = syncFilledOutState(Array.from(changedCategories), merged);
+
+          changedCategories.forEach((categoryKey) => {
+            // Now-empty categories were already handled by
+            // syncFilledOutState above (pending/debounce cleared) — no
+            // trigger to schedule for them.
+            if (!results.get(categoryKey)) return;
+
+            const existingTimer = debounceTimersRef.current.get(categoryKey);
+            if (existingTimer) clearTimeout(existingTimer);
+            debounceTimersRef.current.set(
+              categoryKey,
+              setTimeout(() => {
+                debounceTimersRef.current.delete(categoryKey);
+                triggerCategory(categoryKey);
+              }, FIELD_CHANGE_DEBOUNCE_MS)
+            );
+          });
+        }
       }
 
       // Merge rather than replace — `next` (from either source) only
       // reports the fields involved in that particular update, not a full
       // snapshot, so replacing outright would drop every other field's
       // last known live value.
-      liveFieldOverridesRef.current = { ...previous, ...next };
+      liveFieldOverridesRef.current = merged;
     },
-    [triggerCategory]
+    [triggerCategory, syncFilledOutState]
   );
 
   // Keeps liveFieldOverridesRef in sync with live edits on every change, and
@@ -442,6 +481,7 @@ export function useValidation(customField: CustomFieldLocation) {
     hasSavedEntry,
     categories: VALIDATION_CATEGORIES,
     feedback,
+    isFilledOutByCategory,
     categoryState,
     isTriggeringAll,
     globalError,

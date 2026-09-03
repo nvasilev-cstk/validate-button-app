@@ -206,40 +206,58 @@ attempting a request.
      change, not a full snapshot, so replacing outright would drop every other field's last
      known live value). Net effect: the normal, fully-formed entry, with whichever field was
      just edited substituted for its live, possibly-unsaved value.
-7. **Empty fields are skipped, not validated.** Before triggering — either path — each
-   category's configured `validation_fields` paths are checked with `isCategoryFilledOut()` in
-   [`src/lib/validationConfig.ts`](src/lib/validationConfig.ts). A category with no filled-out
-   fields never gets a network call at all; instead it immediately shows a synthesized local
-   finding (`status: "incomplete"`, amber, e.g. "Author needs to be filled out before it can be
-   validated.") in its usual spot. For the manual "run all" button this is evaluated per
-   category — categories that *are* filled out still get `POST`ed together and polled as usual;
-   if none are filled out, the `url` call is skipped entirely. "Filled out" handles the field
-   shapes actually in use — blank/whitespace-only strings, empty arrays, unset reference stubs
-   (`{ uid: "" }`), and JSON RTE docs with no real text (an empty paragraph still has structural
-   `type`/`uid`/`attrs` keys, so those are ignored — only `children`/`text` content counts) are
-   all treated as empty; `0`/`false` are treated as real, set values.
-8. **Polling**: all pending categories share one loop (rather than one per category) — it checks
+7. **Emptiness always wins over cached feedback.** `useValidation.ts` tracks two separate,
+   independent things per category:
+   - `feedback` — a pure cache of whatever the ValidationFeedback entry last reported. It's
+     never synthesized or hand-edited; only `refreshFeedback()` (from the CMA query) writes to
+     it.
+   - `isFilledOutByCategory` — whether that category's configured `validation_fields` paths
+     currently have real content, per `isCategoryFilledOut()` in
+     [`src/lib/validationConfig.ts`](src/lib/validationConfig.ts). Seeded at mount from the
+     entry's current state (so a category already empty when the entry is reopened is correct
+     immediately, with no edit needed to "discover" that), and kept live-updated by
+     `syncFilledOutState()` — called from `checkForFieldChanges` on every relevant edit
+     (immediately, no debounce — updating this is a local UI decision, not a network call), and
+     from `triggerAll`/`triggerCategory` right before they'd otherwise fire a request.
+
+   `ValidationButton.tsx` checks `isFilledOutByCategory` **first**, before ever looking at
+   `feedback` — a category with `isFilledOutByCategory[key] === false` always renders "needs to
+   be filled out", full stop, regardless of what's cached in `feedback` for it (even a
+   legitimate report from before the field was last cleared). This is what makes deleting an
+   author or a headline immediately show the missing-field message instead of the old report,
+   with no dependency on network timing, poll ordering, or whether a re-validation happened to
+   have been triggered yet.
+
+   Whenever a category is found not filled out, its pending/debounce state is also cleared —
+   there's no point continuing to poll for (or waiting to debounce a trigger for) a category
+   that can't be validated right now. "Filled out" handles the field shapes actually in use —
+   blank/whitespace-only strings, empty arrays, unset reference stubs (`{ uid: "" }`), and JSON
+   RTE docs with no real text (an empty paragraph still has structural `type`/`uid`/`attrs`
+   keys, so those are ignored — only `children`/`text` content counts) are all treated as empty;
+   `0`/`false` are treated as real, set values.
+8. **Triggering skips empty categories.** Before `POST`ing, `triggerAll`/`triggerCategory` check
+   `isCategoryFilledOut()` (via `syncFilledOutState()`, which also updates the state from step 7
+   above) and simply don't send a request for a category that isn't filled out — no synthesized
+   message is written anywhere for this; the display in step 7 already handles it. For the
+   manual "run all" button this is evaluated per category — categories that *are* filled out
+   still get `POST`ed together and polled as usual; if none are filled out, the `url` call is
+   skipped entirely.
+9. **Polling**: all pending categories share one loop (rather than one per category) — it checks
    `statusUrl` every 5 seconds, for up to 18 attempts per category (~90 seconds), and resolves
    each category independently as soon as its feedback field is non-empty. A category joining
    mid-loop is picked up on the next shared tick rather than getting its own precisely-timed
    first check — simpler to reason about with several categories potentially triggered at
    different times. (Tune `POLL_INTERVAL_MS`/`MAX_POLL_ATTEMPTS` in `useValidation.ts` if your
-   validation agents run slower than a few seconds.) **Each poll tick only updates categories
-   that are currently pending** — it never blindly overwrites every category from whatever's in
-   the ValidationFeedback entry. Without this, removing a reference (e.g. clearing the author)
-   while some *other* category was still mid-poll would have its fresh local "needs to be filled
-   out" message immediately clobbered by the stale real result still sitting in
-   `authors_feedback` from the last time author validation actually ran. The one-shot "show
-   existing feedback on reopen" check (step 4 above) is the exception — it merges everything
-   found, since nothing has been shown yet at that point.
-9. **Display**: each category with feedback renders its own block — a category label followed
-   by a checklist of findings (pass/fail/incomplete/unknown icon + label, with
-   `message`/`found`/`fix` shown only when present, typically on failing findings) — and stays
-   visible across re-triggers; a re-check shows a small "Re-checking…" note under the existing
-   findings rather than clearing them. A category with no feedback and nothing in progress is
-   omitted entirely. A pending category with no feedback yet shows "Waiting for results…"; a
-   failed/timed-out one shows an error that clears automatically after 8 seconds (existing
-   feedback for other categories is unaffected).
+   validation agents run slower than a few seconds.)
+10. **Display**: each filled-out category with feedback renders its own block — a category
+    label followed by a checklist of findings (pass/fail/incomplete/unknown icon + label, with
+    `message`/`found`/`fix` shown only when present, typically on failing findings) — and stays
+    visible across re-triggers; a re-check shows a small "Re-checking…" note under the existing
+    findings rather than clearing them. A filled-out category with no feedback and nothing in
+    progress is omitted entirely. A pending category with no feedback yet shows "Waiting for
+    results…"; a failed/timed-out one shows an error that clears automatically after 8 seconds
+    (existing feedback for other categories is unaffected). A category that *isn't* filled out
+    skips all of this — see step 7.
 
 ### The `ValidationFeedback` lookup content type
 

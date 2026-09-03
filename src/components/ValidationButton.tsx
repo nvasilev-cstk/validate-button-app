@@ -52,8 +52,16 @@ function CategoryIcon({ findings }: { findings: ValidationFinding[] }) {
 }
 
 function ValidationButton({ customField }: ValidationButtonProps) {
-  const { hasSavedEntry, categories, feedback, categoryState, isTriggeringAll, globalError, triggerAll } =
-    useValidation(customField);
+  const {
+    hasSavedEntry,
+    categories,
+    feedback,
+    isFilledOutByCategory,
+    categoryState,
+    isTriggeringAll,
+    globalError,
+    triggerAll,
+  } = useValidation(customField);
 
   const label = isTriggeringAll ? 'Sending…' : 'Trigger Validation';
 
@@ -88,6 +96,22 @@ function ValidationButton({ customField }: ValidationButtonProps) {
       )}
 
       {categories.map((category) => {
+        // Emptiness always wins: an empty configured field means the
+        // category can't be validated right now, no matter what's cached
+        // in `feedback` (even a legitimate report from before the field
+        // was cleared) — checked first, ahead of everything else below.
+        if (isFilledOutByCategory[category.key] === false) {
+          return (
+            <div key={category.key} className="cs-status cs-status--report">
+              <AlertTriangle size={14} className="cs-finding__icon--incomplete" />
+              <div className="cs-status__content">
+                <div className="cs-status__category-label">{category.label}</div>
+                <span>{category.label} needs to be filled out before it can be validated.</span>
+              </div>
+            </div>
+          );
+        }
+
         const data = feedback[category.feedbackFieldUid];
         const state = categoryState[category.key] ?? 'idle';
 
