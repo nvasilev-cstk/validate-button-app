@@ -214,12 +214,13 @@ attempting a request.
      from `triggerAll`/`triggerCategory` right before they'd otherwise fire a request.
 
    `ValidationButton.tsx` checks `isFilledOutByCategory` **first**, before ever looking at
-   `feedback` — a category with `isFilledOutByCategory[key] === false` always renders "needs to
-   be filled out", full stop, regardless of what's cached in `feedback` for it (even a
-   legitimate report from before the field was last cleared). This is what makes deleting an
-   author or a headline immediately show the missing-field message instead of the old report,
-   with no dependency on network timing, poll ordering, or whether a re-validation happened to
-   have been triggered yet.
+   `feedback` — a category with `isFilledOutByCategory[key] === false` renders **nothing**,
+   full stop, regardless of what's cached in `feedback` for it (even a legitimate report from
+   before the field was last cleared, which is now stale). There's deliberately no "needs to be
+   filled out" notice — only actual errors are surfaced (see step 10). This is what makes
+   deleting an author or a headline immediately clear its old report, with no dependency on
+   network timing, poll ordering, or whether a re-validation happened to have been triggered
+   yet.
 
    Whenever a category is found not filled out, its pending/debounce state is also cleared —
    there's no point continuing to poll for (or waiting to debounce a trigger for) a category
@@ -230,8 +231,8 @@ attempting a request.
    `0`/`false` are treated as real, set values.
 8. **Triggering skips empty categories.** Before `POST`ing, `triggerAll`/`triggerCategory` check
    `isCategoryFilledOut()` (via `syncFilledOutState()`, which also updates the state from step 7
-   above) and simply don't send a request for a category that isn't filled out — no synthesized
-   message is written anywhere for this; the display in step 7 already handles it. For the
+   above) and simply don't send a request for a category that isn't filled out — nothing is
+   written anywhere for this, and nothing is displayed for it (step 7). For the
    manual "run all" button this is evaluated per category — categories that *are* filled out
    still get `POST`ed together and polled as usual; if none are filled out, the `url` call is
    skipped entirely.
@@ -252,9 +253,8 @@ attempting a request.
     shows a small "Re-checking…" note under the existing errors rather than clearing them. A
     pending category with no errors shown yet shows "Waiting for results…" (and disappears if
     the result comes back clean); a failed/timed-out one shows an error that clears
-    automatically after 8 seconds. A category that *isn't* filled out skips all of this — see
-    step 7 (that "needs to be filled out" notice is always shown, since it's something the
-    editor needs to act on).
+    automatically after 8 seconds. A category that *isn't* filled out skips all of this and
+    shows nothing — see step 7.
 
 ### The `ValidationFeedback` lookup content type
 

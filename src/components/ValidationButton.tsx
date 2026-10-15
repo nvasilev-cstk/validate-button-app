@@ -1,4 +1,4 @@
-import { AlertCircle, AlertTriangle, Info, Loader2, ShieldCheck, XCircle } from 'lucide-react';
+import { AlertCircle, Info, Loader2, ShieldCheck, XCircle } from 'lucide-react';
 import type { CustomFieldLocation } from '../App';
 import { useValidation } from '../hooks/useValidation';
 import type { ValidationFinding } from '../lib/validationApi';
@@ -79,20 +79,12 @@ function ValidationButton({ customField }: ValidationButtonProps) {
 
       {categories.map((category) => {
         // Emptiness always wins: an empty configured field means the
-        // category can't be validated right now, no matter what's cached
-        // in `feedback` (even a legitimate report from before the field
-        // was cleared) — checked first, ahead of everything else below.
-        if (isFilledOutByCategory[category.key] === false) {
-          return (
-            <div key={category.key} className="cs-status cs-status--report">
-              <AlertTriangle size={14} className="cs-finding__icon--incomplete" />
-              <div className="cs-status__content">
-                <div className="cs-status__category-label">{category.label}</div>
-                <span>{category.label} needs to be filled out before it can be validated.</span>
-              </div>
-            </div>
-          );
-        }
+        // category can't be validated right now, so nothing is shown for
+        // it — no "needs to be filled out" notice (only actual errors are
+        // surfaced), and no cached report either, even a legitimate one
+        // from before the field was cleared, since it's now stale.
+        // Checked first, ahead of everything else below.
+        if (isFilledOutByCategory[category.key] === false) return null;
 
         // Only actual errors are surfaced: anything that isn't a "fail"
         // (passes, warnings, informational notes) is dropped here, and a
