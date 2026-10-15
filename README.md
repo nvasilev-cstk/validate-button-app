@@ -242,15 +242,19 @@ attempting a request.
    first check — simpler to reason about with several categories potentially triggered at
    different times. (Tune `POLL_INTERVAL_MS`/`MAX_POLL_ATTEMPTS` in `useValidation.ts` if your
    validation agents run slower than a few seconds.)
-10. **Display**: each filled-out category with feedback renders its own block — a category
-    label followed by a checklist of findings (pass/fail/incomplete/unknown icon + label, with
-    `message`/`found`/`fix` shown only when present, typically on failing findings) — and stays
-    visible across re-triggers; a re-check shows a small "Re-checking…" note under the existing
-    findings rather than clearing them. A filled-out category with no feedback and nothing in
-    progress is omitted entirely. A pending category with no feedback yet shows "Waiting for
-    results…"; a failed/timed-out one shows an error that clears automatically after 8 seconds
-    (existing feedback for other categories is unaffected). A category that *isn't* filled out
-    skips all of this — see step 7.
+10. **Display — errors only.** Only findings with `status: "fail"` are ever shown. Passes,
+    warnings (`"warn"`), and any other informational status are filtered out in
+    `ValidationButton.tsx` before rendering, and a category whose report contains no `"fail"`
+    findings is hidden entirely (no block at all, same as a category with no report yet) — so a
+    category appears only while it has something wrong. A category with errors renders its
+    label followed by a list of just those failing findings (`label`, plus
+    `message`/`found`/`fix` when present), and stays visible across re-triggers; a re-check
+    shows a small "Re-checking…" note under the existing errors rather than clearing them. A
+    pending category with no errors shown yet shows "Waiting for results…" (and disappears if
+    the result comes back clean); a failed/timed-out one shows an error that clears
+    automatically after 8 seconds. A category that *isn't* filled out skips all of this — see
+    step 7 (that "needs to be filled out" notice is always shown, since it's something the
+    editor needs to act on).
 
 ### The `ValidationFeedback` lookup content type
 

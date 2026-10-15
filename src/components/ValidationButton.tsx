@@ -1,4 +1,4 @@
-import { AlertCircle, AlertTriangle, CheckCircle2, HelpCircle, Info, Loader2, ShieldCheck, XCircle } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Info, Loader2, ShieldCheck, XCircle } from 'lucide-react';
 import type { CustomFieldLocation } from '../App';
 import { useValidation } from '../hooks/useValidation';
 import type { ValidationFinding } from '../lib/validationApi';
@@ -7,26 +7,14 @@ interface ValidationButtonProps {
   customField: CustomFieldLocation;
 }
 
-function FindingIcon({ status }: { status?: string }) {
-  if (status === 'pass') return <CheckCircle2 size={12} className="cs-finding__icon cs-finding__icon--pass" />;
-  if (status === 'fail') return <XCircle size={12} className="cs-finding__icon cs-finding__icon--fail" />;
-  if (status === 'incomplete') return <AlertTriangle size={12} className="cs-finding__icon cs-finding__icon--incomplete" />;
-  return <HelpCircle size={12} className="cs-finding__icon cs-finding__icon--unknown" />;
-}
-
+// Only findings with status "fail" are ever shown — passes, warnings, and
+// any other informational status are filtered out before rendering (see
+// the errorFindings filter in ValidationButton below), so this only needs
+// to render the error case.
 function FindingRow({ finding }: { finding: ValidationFinding }) {
-  const statusClass =
-    finding.status === 'pass'
-      ? 'cs-finding--pass'
-      : finding.status === 'fail'
-        ? 'cs-finding--fail'
-        : finding.status === 'incomplete'
-          ? 'cs-finding--incomplete'
-          : 'cs-finding--unknown';
-
   return (
-    <li className={`cs-finding ${statusClass}`}>
-      <FindingIcon status={finding.status} />
+    <li className="cs-finding cs-finding--fail">
+      <XCircle size={12} className="cs-finding__icon cs-finding__icon--fail" />
       <div className="cs-finding__body">
         <span className="cs-finding__label">{finding.label || finding.id || 'Check'}</span>
         {finding.message && <div className="cs-finding__detail">{finding.message}</div>}
@@ -43,12 +31,6 @@ function FindingRow({ finding }: { finding: ValidationFinding }) {
       </div>
     </li>
   );
-}
-
-function CategoryIcon({ findings }: { findings: ValidationFinding[] }) {
-  if (findings.some((f) => f.status === 'fail')) return <AlertCircle size={14} className="cs-finding__icon--fail" />;
-  if (findings.some((f) => f.status === 'incomplete')) return <AlertTriangle size={14} className="cs-finding__icon--incomplete" />;
-  return <CheckCircle2 size={14} />;
 }
 
 function ValidationButton({ customField }: ValidationButtonProps) {
@@ -112,28 +94,31 @@ function ValidationButton({ customField }: ValidationButtonProps) {
           );
         }
 
-        const data = feedback[category.feedbackFieldUid];
+        // Only actual errors are surfaced: anything that isn't a "fail"
+        // (passes, warnings, informational notes) is dropped here, and a
+        // category whose report has no errors is hidden entirely — it
+        // doesn't render a block at all, same as one with no report yet.
+        const errorFindings = (feedback[category.feedbackFieldUid]?.findings ?? []).filter(
+          (finding) => finding.status === 'fail'
+        );
+        const hasErrors = errorFindings.length > 0;
         const state = categoryState[category.key] ?? 'idle';
 
-        // Nothing to show and nothing in progress — omit entirely, per spec.
-        if (!data && state === 'idle') return null;
+        // No errors and nothing in progress — omit entirely.
+        if (!hasErrors && state === 'idle') return null;
 
         return (
           <div key={category.key} className="cs-status cs-status--report">
-            {state === 'pending' && !data ? (
+            {state === 'pending' && !hasErrors ? (
               <Loader2 className="cs-status__icon cs-status__icon--spin" size={14} />
-            ) : state === 'error' && !data ? (
-              <AlertCircle size={14} />
-            ) : data ? (
-              <CategoryIcon findings={data.findings} />
             ) : (
-              <CheckCircle2 size={14} />
+              <AlertCircle size={14} className="cs-finding__icon--fail" />
             )}
             <div className="cs-status__content">
               <div className="cs-status__category-label">{category.label}</div>
-              {data ? (
+              {hasErrors ? (
                 <ul className="cs-findings">
-                  {data.findings.map((finding, index) => (
+                  {errorFindings.map((finding, index) => (
                     <FindingRow key={finding.id ?? index} finding={finding} />
                   ))}
                 </ul>
@@ -142,7 +127,7 @@ function ValidationButton({ customField }: ValidationButtonProps) {
               ) : (
                 <span>Validation failed or timed out.</span>
               )}
-              {data && state === 'pending' && <div className="cs-status__rechecking">Re-checking…</div>}
+              {hasErrors && state === 'pending' && <div className="cs-status__rechecking">Re-checking…</div>}
             </div>
           </div>
         );
