@@ -308,6 +308,21 @@ export function useValidation(customField: CustomFieldLocation) {
     startPollingIfNeeded();
   }, [hasSavedEntry, config, buildEntryPayload, syncFilledOutState, markPending, startPollingIfNeeded]);
 
+  // Optional full validation run on load (`run_at_load` in the field
+  // config). Only fires if the entry was already saved when the app loaded —
+  // an unsaved one has no uid to validate, and the ref is pre-set to `true`
+  // in that case so the first save of a brand-new entry later on doesn't
+  // retroactively count as "load". The ref also makes it strictly once per
+  // mount: it survives StrictMode's dev-only mount/unmount/mount cycle
+  // (refs persist across it), so that doesn't double-fire the POST.
+  const hasRunAtLoadRef = useRef(!hasSavedEntry);
+  useEffect(() => {
+    if (!config.runAtLoad || !hasSavedEntry || hasRunAtLoadRef.current) return;
+    hasRunAtLoadRef.current = true;
+    triggerAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasSavedEntry]);
+
   const triggerCategory = useCallback(
     async (categoryKey: string) => {
       const url = config.categoryUrls[categoryKey];

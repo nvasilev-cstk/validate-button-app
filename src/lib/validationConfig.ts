@@ -37,6 +37,8 @@ export interface ValidationConfig {
   authorization: string;
   /** How often (ms) to poll statusUrl for results while a validation is pending. */
   refreshRateMs: number;
+  /** Run a full validation automatically when the app loads (for an already-saved entry). */
+  runAtLoad: boolean;
   /** category key -> that category's own validation endpoint */
   categoryUrls: Record<string, string>;
   /**
@@ -89,6 +91,14 @@ function parseRefreshRate(raw: unknown): number {
   return Math.max(value, MIN_REFRESH_RATE_MS);
 }
 
+// `run_at_load` is conventionally written as the string "true" in the field
+// config, but a real JSON boolean is accepted too. Anything else — missing,
+// "false", "yes", etc. — is off.
+function parseBooleanFlag(raw: unknown): boolean {
+  if (typeof raw === 'boolean') return raw;
+  return typeof raw === 'string' && raw.trim().toLowerCase() === 'true';
+}
+
 export function parseValidationConfig(fieldConfig: Record<string, unknown> | undefined): ValidationConfig {
   const cfg = fieldConfig ?? {};
   const validationUrls = (cfg.validation_urls as Record<string, unknown> | undefined) ?? {};
@@ -117,6 +127,7 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
     apiKey: (cfg.api_key as string | undefined) ?? '',
     authorization: (cfg.authorization as string | undefined) ?? '',
     refreshRateMs: parseRefreshRate(cfg.refresh_rate),
+    runAtLoad: parseBooleanFlag(cfg.run_at_load),
     categoryUrls,
     fieldPathToCategory,
     categoryFieldPaths,

@@ -99,6 +99,7 @@ config on the field instance when you add the Custom Field to a content type:
   "api_key": "your-stack-api-key",
   "authorization": "your-management-token-or-auth-token",
   "refresh_rate": 5000,
+  "run_at_load": "true",
   "validation_urls": {
     "headline_check": "https://.../headline-check",
     "url_check": "https://.../url-check",
@@ -136,6 +137,13 @@ config on the field instance when you add the Custom Field to a content type:
   turn into a request flood). Note the poll gives up after 18 attempts per category, so the
   total time before a pending category times out is `refresh_rate × 18` — e.g. `3000` → ~54s,
   `5000` → ~90s.
+- **`run_at_load`** — set to `"true"` to run a full validation automatically when the app loads,
+  exactly as if the editor had clicked "Trigger Validation" (same per-category empty-field
+  skipping, same single `POST` to `url`, then polling). Optional; off by default. The string
+  `"true"` (any casing) or a JSON `true` turns it on — anything else, including `"false"`,
+  leaves it off. It only runs if the entry is already saved when the app loads (an unsaved
+  entry has no uid to validate, and saving a new entry later doesn't count as "load"), and
+  only once per load.
 - **`validation_urls`** — one endpoint per category (see the table above for the exact keys).
   Each is `POST`ed the full entry JSON when that single category is auto-triggered by a field
   edit. A category missing here just never gets auto-triggered (and isn't touched by the "run
