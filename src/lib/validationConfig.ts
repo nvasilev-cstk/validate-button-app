@@ -29,9 +29,9 @@ export const DEFAULT_REFRESH_RATE_MS = 5_000;
 // result poll into a request flood against the Management API.
 const MIN_REFRESH_RATE_MS = 500;
 
+const HTTP_URL_PATTERN = /^https?:\/\/\S+$/i;
+
 export interface ValidationConfig {
-  /** "Run everything" endpoint — POSTed to by the manual button. */
-  triggerUrl: string;
   statusUrl: string;
   apiKey: string;
   authorization: string;
@@ -39,7 +39,12 @@ export interface ValidationConfig {
   refreshRateMs: number;
   /** Run a full validation automatically when the app loads (for an already-saved entry). */
   runAtLoad: boolean;
-  /** category key -> that category's own validation endpoint */
+  /**
+   * category key -> that category's own validation endpoint. Only
+   * well-formed http(s) URLs are kept — a leftover placeholder such as
+   * "featured_image_check_url" would otherwise be treated as a configured
+   * endpoint and POSTed to as a relative URL on the app's own host.
+   */
   categoryUrls: Record<string, string>;
   /**
    * Entry field path -> the category it belongs to, for the
@@ -110,8 +115,14 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
 
   for (const def of VALIDATION_CATEGORIES) {
     const url = validationUrls[def.urlConfigKey];
-    if (typeof url === 'string' && url) {
-      categoryUrls[def.key] = url;
+    if (typeof url === 'string' && url.trim()) {
+      if (HTTP_URL_PATTERN.test(url.trim())) {
+        categoryUrls[def.key] = url.trim();
+      } else {
+        console.warn(
+          `[Validation] Ignoring validation_urls.${def.urlConfigKey}: "${url}" is not an http(s) URL.`
+        );
+      }
     }
 
     const paths = normalizeFieldPathList(validationFields[def.fieldsConfigKey]);
@@ -122,7 +133,6 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
   }
 
   return {
-    triggerUrl: (cfg.url as string | undefined) ?? '',
     statusUrl: (cfg.statusUrl as string | undefined) ?? '',
     apiKey: (cfg.api_key as string | undefined) ?? '',
     authorization: (cfg.authorization as string | undefined) ?? '',

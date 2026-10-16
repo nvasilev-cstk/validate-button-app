@@ -94,7 +94,6 @@ config on the field instance when you add the Custom Field to a content type:
 
 ```json
 {
-  "url": "https://your-agent-orchestrator.example.com/execute",
   "statusUrl": "https://api.contentstack.io/v3/content_types/validation_feedback/entries",
   "api_key": "your-stack-api-key",
   "authorization": "your-management-token-or-auth-token",
@@ -121,9 +120,10 @@ config on the field instance when you add the Custom Field to a content type:
 }
 ```
 
-- **`url`** — the "run everything" endpoint. The manual button `POST`s the full entry JSON here
-  and treats it as queuing every category at once (its response body isn't used, only the HTTP
-  status).
+- **`url`** — **no longer used.** Earlier versions `POST`ed the whole entry to this single
+  "run everything" endpoint from the manual button; that's been replaced by hitting each
+  category's own endpoint directly (see `validation_urls` and "Manual trigger" below), so this
+  key is ignored and can be removed from existing configs.
 - **`statusUrl`** — a Contentstack Management API "query entries" endpoint for the
   `validation_feedback` content type (see below). The app queries it by entry ID:
   `GET {statusUrl}?query={"entryid":"<entry.uid>"}`.
@@ -138,16 +138,18 @@ config on the field instance when you add the Custom Field to a content type:
   total time before a pending category times out is `refresh_rate × 18` — e.g. `3000` → ~54s,
   `5000` → ~90s.
 - **`run_at_load`** — set to `"true"` to run a full validation automatically when the app loads,
-  exactly as if the editor had clicked "Trigger Validation" (same per-category empty-field
-  skipping, same single `POST` to `url`, then polling). Optional; off by default. The string
+  exactly as if the editor had clicked "Trigger Validation" (one `POST` per configured
+  category to its own endpoint, with the same empty-field skipping, then polling). Optional; off by default. The string
   `"true"` (any casing) or a JSON `true` turns it on — anything else, including `"false"`,
   leaves it off. It only runs if the entry is already saved when the app loads (an unsaved
   entry has no uid to validate, and saving a new entry later doesn't count as "load"), and
   only once per load.
 - **`validation_urls`** — one endpoint per category (see the table above for the exact keys).
-  Each is `POST`ed the full entry JSON when that single category is auto-triggered by a field
-  edit. A category missing here just never gets auto-triggered (and isn't touched by the "run
-  everything" button either, which only depends on `url`).
+  Each is `POST`ed the full entry JSON when that category is validated — whether by the manual
+  button, `run_at_load`, or an auto-trigger from a field edit. Only well-formed `http(s)://`
+  URLs count: anything else (e.g. a leftover placeholder like `"featured_image_check_url"`) is
+  ignored with a console warning, so it can't be mistaken for a configured endpoint. A category
+  with no valid URL here is never validated by any trigger.
 - **`validation_fields`** — which entry field path(s) belong to each category, used only to
   decide which category to auto-trigger when a field changes. Each value should be an array of
   **field paths**, not just top-level uids, resolved by `resolvePath` in
@@ -168,8 +170,9 @@ config on the field instance when you add the Custom Field to a content type:
   - A single comma-joined string in one array slot (e.g. `["a_uid, b_uid"]`) is also tolerated
     and split automatically, but prefer separate array elements.
 
-If `url` or `statusUrl` is missing, the manual button shows an inline error instead of
-attempting a request.
+If `statusUrl` is missing, or no category has both a valid `validation_urls` entry and at least
+one `validation_fields` path, the manual button shows an inline error instead of attempting a
+request.
 
 ## How it works
 
@@ -186,8 +189,12 @@ attempting a request.
 4. **On first render** (once there's a saved uid), it does a single, silent status check and
    shows any feedback that already exists (e.g. the editor reopened an entry that was validated
    earlier) — no click required.
-5. **Manual trigger**: clicking the button `POST`s the entry to `url`, then marks *all 7*
-   categories as pending and starts the shared polling loop.
+5. **Manual trigger**: clicking the button (or `run_at_load`) fans out to every category that is
+   actually set up in the config — i.e. has a valid `http(s)` URL under `validation_urls` **and**
+   at least one path under `validation_fields`. Each such category is `POST`ed the entry at its
+   *own* endpoint, in parallel, and marked pending individually; categories missing either
+   piece are left entirely alone (no request, nothing pending, nothing shown). Then the shared
+   polling loop picks up results as they land.
 6. **Auto-trigger per field edit**: `entry.onChange` fires on every real edit (unlike
    `field.onChange`, which only fires on programmatic writes from other apps — not from someone
    typing in the editor). It resolves each `validation_fields` path (via `resolvePath`,
@@ -247,10 +254,9 @@ attempting a request.
 8. **Triggering skips empty categories.** Before `POST`ing, `triggerAll`/`triggerCategory` check
    `isCategoryFilledOut()` (via `syncFilledOutState()`, which also updates the state from step 7
    above) and simply don't send a request for a category that isn't filled out — nothing is
-   written anywhere for this, and nothing is displayed for it (step 7). For the
-   manual "run all" button this is evaluated per category — categories that *are* filled out
-   still get `POST`ed together and polled as usual; if none are filled out, the `url` call is
-   skipped entirely.
+   written anywhere for this, and nothing is displayed for it (step 7). For the manual button
+   this is evaluated per category — each filled-out configured category still gets its own
+   `POST` and is polled as usual; empty ones are skipped.
 9. **Polling**: all pending categories share one loop (rather than one per category) — it checks
    `statusUrl` every `refresh_rate` ms (default 5000; see the config section), for up to 18
    attempts per category, and resolves each category independently as soon as its feedback field

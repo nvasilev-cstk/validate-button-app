@@ -267,62 +267,9 @@ export function useValidation(customField: CustomFieldLocation) {
     });
   }, []);
 
-  const triggerAll = useCallback(async () => {
-    if (!hasSavedEntry) {
-      setGlobalError('Save this entry before running validation.');
-      return;
-    }
-    if (!config.triggerUrl || !config.statusUrl) {
-      setGlobalError('Set "url" and "statusUrl" in the field instance settings.');
-      return;
-    }
-
-    setGlobalError('');
-
-    const entryData = buildEntryPayload();
-    const results = syncFilledOutState(
-      VALIDATION_CATEGORIES.map((def) => def.key),
-      entryData
-    );
-    const readyCategories = VALIDATION_CATEGORIES.filter((def) => results.get(def.key)).map((def) => def.key);
-
-    // Nothing ready to validate — skip the network call entirely rather
-    // than asking the orchestrator to check fields we already know are empty.
-    if (readyCategories.length === 0) return;
-
-    setIsTriggeringAll(true);
-
-    try {
-      await postEntryForValidation(config.triggerUrl, entryData);
-    } catch (err) {
-      if (isMounted.current) {
-        setIsTriggeringAll(false);
-        setGlobalError(err instanceof Error ? err.message : 'Failed to trigger validation.');
-      }
-      return;
-    }
-
-    if (!isMounted.current) return;
-    setIsTriggeringAll(false);
-    markPending(readyCategories);
-    startPollingIfNeeded();
-  }, [hasSavedEntry, config, buildEntryPayload, syncFilledOutState, markPending, startPollingIfNeeded]);
-
-  // Optional full validation run on load (`run_at_load` in the field
-  // config). Only fires if the entry was already saved when the app loaded —
-  // an unsaved one has no uid to validate, and the ref is pre-set to `true`
-  // in that case so the first save of a brand-new entry later on doesn't
-  // retroactively count as "load". The ref also makes it strictly once per
-  // mount: it survives StrictMode's dev-only mount/unmount/mount cycle
-  // (refs persist across it), so that doesn't double-fire the POST.
-  const hasRunAtLoadRef = useRef(!hasSavedEntry);
-  useEffect(() => {
-    if (!config.runAtLoad || !hasSavedEntry || hasRunAtLoadRef.current) return;
-    hasRunAtLoadRef.current = true;
-    triggerAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasSavedEntry]);
-
+  // Validates one category by POSTing to its own endpoint (validation_urls).
+  // Used both by the field-edit auto-trigger (debounced) and, fanned out
+  // across categories, by triggerAll below.
   const triggerCategory = useCallback(
     async (categoryKey: string) => {
       const url = config.categoryUrls[categoryKey];
@@ -337,7 +284,7 @@ export function useValidation(customField: CustomFieldLocation) {
       try {
         await postEntryForValidation(url, entryData);
       } catch (err) {
-        console.error(`[Validation] Failed to auto-trigger "${categoryKey}"`, err);
+        console.error(`[Validation] Failed to trigger "${categoryKey}"`, err);
         if (isMounted.current) {
           pendingAttemptsRef.current.delete(categoryKey);
           setCategoryState((prev) => ({ ...prev, [categoryKey]: 'error' }));
@@ -349,6 +296,52 @@ export function useValidation(customField: CustomFieldLocation) {
     },
     [config, hasSavedEntry, buildEntryPayload, syncFilledOutState, markPending, startPollingIfNeeded]
   );
+
+  // Runs every category that's actually set up in the field config — i.e.
+  // has an http(s) endpoint under `validation_urls` AND at least one path
+  // under `validation_fields` — each against its own endpoint, in parallel.
+  // Categories missing either are left alone entirely (no request, nothing
+  // pending, nothing shown). Empty-field categories are skipped by
+  // triggerCategory itself.
+  const triggerAll = useCallback(async () => {
+    if (!hasSavedEntry) {
+      setGlobalError('Save this entry before running validation.');
+      return;
+    }
+    if (!config.statusUrl) {
+      setGlobalError('Set "statusUrl" in the field instance settings.');
+      return;
+    }
+
+    const configuredCategories = VALIDATION_CATEGORIES.filter(
+      (def) => config.categoryUrls[def.key] && (config.categoryFieldPaths[def.key]?.length ?? 0) > 0
+    ).map((def) => def.key);
+
+    if (configuredCategories.length === 0) {
+      setGlobalError('No validations are configured. Add endpoint URLs under "validation_urls" and matching paths under "validation_fields".');
+      return;
+    }
+
+    setGlobalError('');
+    setIsTriggeringAll(true);
+    await Promise.all(configuredCategories.map((key) => triggerCategory(key)));
+    if (isMounted.current) setIsTriggeringAll(false);
+  }, [hasSavedEntry, config, triggerCategory]);
+
+  // Optional full validation run on load (`run_at_load` in the field
+  // config). Only fires if the entry was already saved when the app loaded —
+  // an unsaved one has no uid to validate, and the ref is pre-set to `true`
+  // in that case so the first save of a brand-new entry later on doesn't
+  // retroactively count as "load". The ref also makes it strictly once per
+  // mount: it survives StrictMode's dev-only mount/unmount/mount cycle
+  // (refs persist across it), so that doesn't double-fire the POSTs.
+  const hasRunAtLoadRef = useRef(!hasSavedEntry);
+  useEffect(() => {
+    if (!config.runAtLoad || !hasSavedEntry || hasRunAtLoadRef.current) return;
+    hasRunAtLoadRef.current = true;
+    triggerAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasSavedEntry]);
 
   // Keeps liveFieldOverridesRef in sync with live edits on every change, and
   // auto-triggers a category's own check when one of its fields changes,
