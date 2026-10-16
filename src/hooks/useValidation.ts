@@ -21,9 +21,11 @@ export type CategoryState = 'idle' | 'pending' | 'error';
 // a category that joins mid-loop just gets picked up on the next shared tick
 // instead of getting its own precisely-timed first check. Simpler to reason
 // about with several categories potentially triggered at different times,
-// at the cost of a category's first check landing anywhere from ~0-10s after
-// it was queued rather than a fixed delay.
-const POLL_INTERVAL_MS = 5_000;
+// at the cost of a category's first check landing up to one interval after
+// it was queued rather than a fixed delay. The interval itself comes from
+// the field config's `refresh_rate` (ms) — see config.refreshRateMs. Since
+// the attempt cap is fixed, the total time before a category times out is
+// refresh_rate × MAX_POLL_ATTEMPTS.
 const MAX_POLL_ATTEMPTS = 18;
 const FIELD_CHANGE_DEBOUNCE_MS = 1500;
 const CATEGORY_ERROR_RESET_MS = 8000;
@@ -211,7 +213,7 @@ export function useValidation(customField: CustomFieldLocation) {
         return;
       }
 
-      await wait(POLL_INTERVAL_MS);
+      await wait(config.refreshRateMs);
       if (!isMounted.current) {
         isPollingRef.current = false;
         return;
@@ -252,7 +254,7 @@ export function useValidation(customField: CustomFieldLocation) {
     };
 
     tick();
-  }, [refreshFeedback]);
+  }, [refreshFeedback, config.refreshRateMs]);
 
   const markPending = useCallback((categoryKeys: string[]) => {
     setCategoryState((prev) => {

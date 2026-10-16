@@ -24,12 +24,19 @@ export const VALIDATION_CATEGORIES: ValidationCategoryDef[] = [
   { key: 'article_text', urlConfigKey: 'article_text_check', fieldsConfigKey: 'article_text', feedbackFieldUid: 'article_text_feedback', label: 'Article Text' },
 ];
 
+export const DEFAULT_REFRESH_RATE_MS = 5_000;
+// Floor so a typo like `refresh_rate: 5` (meant as seconds) can't turn the
+// result poll into a request flood against the Management API.
+const MIN_REFRESH_RATE_MS = 500;
+
 export interface ValidationConfig {
   /** "Run everything" endpoint — POSTed to by the manual button. */
   triggerUrl: string;
   statusUrl: string;
   apiKey: string;
   authorization: string;
+  /** How often (ms) to poll statusUrl for results while a validation is pending. */
+  refreshRateMs: number;
   /** category key -> that category's own validation endpoint */
   categoryUrls: Record<string, string>;
   /**
@@ -73,6 +80,15 @@ function normalizeFieldPathList(raw: unknown): string[] {
     .filter(Boolean);
 }
 
+// `refresh_rate` is in milliseconds. Accepts a number or a numeric string
+// (config JSON is hand-edited); anything missing/non-numeric/non-positive
+// falls back to the default, and tiny values are clamped to the floor.
+function parseRefreshRate(raw: unknown): number {
+  const value = typeof raw === 'string' ? Number(raw) : raw;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return DEFAULT_REFRESH_RATE_MS;
+  return Math.max(value, MIN_REFRESH_RATE_MS);
+}
+
 export function parseValidationConfig(fieldConfig: Record<string, unknown> | undefined): ValidationConfig {
   const cfg = fieldConfig ?? {};
   const validationUrls = (cfg.validation_urls as Record<string, unknown> | undefined) ?? {};
@@ -100,6 +116,7 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
     statusUrl: (cfg.statusUrl as string | undefined) ?? '',
     apiKey: (cfg.api_key as string | undefined) ?? '',
     authorization: (cfg.authorization as string | undefined) ?? '',
+    refreshRateMs: parseRefreshRate(cfg.refresh_rate),
     categoryUrls,
     fieldPathToCategory,
     categoryFieldPaths,

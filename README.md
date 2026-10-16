@@ -98,6 +98,7 @@ config on the field instance when you add the Custom Field to a content type:
   "statusUrl": "https://api.contentstack.io/v3/content_types/validation_feedback/entries",
   "api_key": "your-stack-api-key",
   "authorization": "your-management-token-or-auth-token",
+  "refresh_rate": 5000,
   "validation_urls": {
     "headline_check": "https://.../headline-check",
     "url_check": "https://.../url-check",
@@ -129,6 +130,12 @@ config on the field instance when you add the Custom Field to a content type:
   on every request to `statusUrl`, as required by Contentstack's Management API. Optional from
   the app's point of view — if omitted, the header is simply not sent and requests will fail
   with an auth error from the Management API rather than from the app itself.
+- **`refresh_rate`** — how often, in **milliseconds**, the app polls `statusUrl` for results
+  while a validation is pending. Optional; defaults to `5000`. A numeric string is accepted too,
+  and values below `500` are clamped up to `500` (so a value meant as seconds, like `3`, can't
+  turn into a request flood). Note the poll gives up after 18 attempts per category, so the
+  total time before a pending category times out is `refresh_rate × 18` — e.g. `3000` → ~54s,
+  `5000` → ~90s.
 - **`validation_urls`** — one endpoint per category (see the table above for the exact keys).
   Each is `POST`ed the full entry JSON when that single category is auto-triggered by a field
   edit. A category missing here just never gets auto-triggered (and isn't touched by the "run
@@ -237,12 +244,12 @@ attempting a request.
    still get `POST`ed together and polled as usual; if none are filled out, the `url` call is
    skipped entirely.
 9. **Polling**: all pending categories share one loop (rather than one per category) — it checks
-   `statusUrl` every 5 seconds, for up to 18 attempts per category (~90 seconds), and resolves
-   each category independently as soon as its feedback field is non-empty. A category joining
-   mid-loop is picked up on the next shared tick rather than getting its own precisely-timed
-   first check — simpler to reason about with several categories potentially triggered at
-   different times. (Tune `POLL_INTERVAL_MS`/`MAX_POLL_ATTEMPTS` in `useValidation.ts` if your
-   validation agents run slower than a few seconds.)
+   `statusUrl` every `refresh_rate` ms (default 5000; see the config section), for up to 18
+   attempts per category, and resolves each category independently as soon as its feedback field
+   is non-empty. A category joining mid-loop is picked up on the next shared tick rather than
+   getting its own precisely-timed first check — simpler to reason about with several
+   categories potentially triggered at different times. (`MAX_POLL_ATTEMPTS` in
+   `useValidation.ts` is fixed, so a slower `refresh_rate` also means a longer total timeout.)
 10. **Display — errors only.** Only findings with `status: "fail"` are ever shown. Passes,
     warnings (`"warn"`), and any other informational status are filtered out in
     `ValidationButton.tsx` before rendering, and a category whose report contains no `"fail"`

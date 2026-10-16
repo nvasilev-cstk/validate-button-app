@@ -22,6 +22,7 @@
               "statusUrl": "",
               "api_key": "",
               "authorization": "",
+              "refresh_rate": 5000,
               "validation_urls": {
                 "headline_check": "",
                 "url_check": "",
