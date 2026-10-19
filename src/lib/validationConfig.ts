@@ -63,6 +63,13 @@ export interface ValidationConfig {
    * validation_watch_fields are deliberately left out of this.
    */
   categoryFieldPaths: Record<string, string[]>;
+  /**
+   * category key -> whether it has any field paths at all (required or
+   * watch-only). A category needs this, plus a URL, to count as configured.
+   * A category with only watch-only paths is valid: it always runs, which
+   * is what you want when the check itself is "these fields must be set".
+   */
+  categoryHasFields: Record<string, boolean>;
 }
 
 // validation_fields entries are field *paths*, not just top-level uids —
@@ -121,6 +128,7 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
   const categoryUrls: Record<string, string> = {};
   const fieldPathToCategory = new Map<string, string>();
   const categoryFieldPaths: Record<string, string[]> = {};
+  const categoryHasFields: Record<string, boolean> = {};
 
   for (const def of VALIDATION_CATEGORIES) {
     const url = validationUrls[def.urlConfigKey];
@@ -139,9 +147,11 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
     for (const path of paths) {
       fieldPathToCategory.set(path, def.key);
     }
-    for (const path of normalizeFieldPathList(validationWatchFields[def.fieldsConfigKey])) {
+    const watchPaths = normalizeFieldPathList(validationWatchFields[def.fieldsConfigKey]);
+    for (const path of watchPaths) {
       fieldPathToCategory.set(path, def.key);
     }
+    categoryHasFields[def.key] = paths.length > 0 || watchPaths.length > 0;
   }
 
   return {
@@ -153,6 +163,7 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
     categoryUrls,
     fieldPathToCategory,
     categoryFieldPaths,
+    categoryHasFields,
   };
 }
 

@@ -299,7 +299,8 @@ export function useValidation(customField: CustomFieldLocation) {
 
   // Runs every category that's actually set up in the field config — i.e.
   // has an http(s) endpoint under `validation_urls` AND at least one path
-  // under `validation_fields` — each against its own endpoint, in parallel.
+  // under `validation_fields` or `validation_watch_fields` — each against
+  // its own endpoint, in parallel.
   // Categories missing either are left alone entirely (no request, nothing
   // pending, nothing shown). Empty-field categories are skipped by
   // triggerCategory itself.
@@ -314,11 +315,11 @@ export function useValidation(customField: CustomFieldLocation) {
     }
 
     const configuredCategories = VALIDATION_CATEGORIES.filter(
-      (def) => config.categoryUrls[def.key] && (config.categoryFieldPaths[def.key]?.length ?? 0) > 0
+      (def) => config.categoryUrls[def.key] && config.categoryHasFields[def.key]
     ).map((def) => def.key);
 
     if (configuredCategories.length === 0) {
-      setGlobalError('No validations are configured. Add endpoint URLs under "validation_urls" and matching paths under "validation_fields".');
+      setGlobalError('No validations are configured. Add endpoint URLs under "validation_urls" and matching paths under "validation_fields" or "validation_watch_fields".');
       return;
     }
 
