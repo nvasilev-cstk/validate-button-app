@@ -280,8 +280,11 @@ request.
     `ValidationButton.tsx` before rendering, and a category whose report contains no `"fail"`
     findings is hidden entirely (no block at all, same as a category with no report yet) — so a
     category appears only while it has something wrong. A category with errors renders its
-    label followed by a list of just those failing findings (`label`, plus
-    `message`/`found`/`fix` when present), and stays visible across re-triggers; a re-check
+    label followed by a list of just those failing findings, and stays visible across
+    re-triggers. Each finding leads with its `message` — what's wrong with the current value
+    — rather than its `label`, which names the passing condition ("Headline is not a
+    placeholder") and so reads backwards on an error; the label is only used when a finding
+    has no message. `found` is shown unless the message already quotes it, then `fix`. A re-check
     shows a small "Re-checking…" note under the existing errors rather than clearing them. A
     pending category with no errors shown yet shows "Waiting for results…" (and disappears if
     the result comes back clean); a failed/timed-out one shows an error that clears
