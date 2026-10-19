@@ -21,6 +21,9 @@
 // serves both asset types — followed by one of the first two.
 
 const CAT = "Featured Image";
+// Written into every report, so the stored feedback shows which version of
+// this code Automate actually ran. Bump it whenever the code changes.
+const CODE_VERSION = "2026-10-19.5";
 const CMA = "https://" + String(input.cma_host || "api.contentstack.io").replace(/^https?:\/\//, "").replace(/\/+$/, "") + "/v3";
 
 // Map to your real field UIDs.
@@ -123,16 +126,61 @@ const sizeFromBytes = (b) => {
   return null;
 };
 
-// Downloads just the start of the image (enough for the header in almost
-// every file), and falls back to the whole file if a large metadata block
-// pushes the size header further in.
+// Automate's fetch doesn't read binary bodies the standard way (its
+// arrayBuffer() comes back empty), so try each body reader in turn, each on
+// its own small download, and use the first that returns real image bytes.
+// `lastRead` records what every attempt got, for the "couldn't read the
+// size" finding.
+const BODY_READERS = [
+  ["arrayBuffer", async (res) => new Uint8Array(await res.arrayBuffer())],
+  ["buffer", async (res) => (res.buffer ? new Uint8Array(await res.buffer()) : null)],
+  ["blob", async (res) => (res.blob ? new Uint8Array(await (await res.blob()).arrayBuffer()) : null)],
+  ["stream", async (res) => {
+    const body = res.body;
+    if (!body) return null;
+    const chunks = [];
+    if (body.getReader) {
+      const reader = body.getReader();
+      for (;;) { const r = await reader.read(); if (r.done) break; chunks.push(r.value); }
+    } else if (body[Symbol.asyncIterator]) {
+      for await (const c of body) chunks.push(typeof c === "string" ? Uint8Array.from(c, (ch) => ch.charCodeAt(0) & 0xff) : c);
+    } else return null;
+    const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+    let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
+    return out;
+  }],
+  // Last: only works if the body was decoded byte-for-byte (latin1); a
+  // UTF-8 decode loses the bytes, which shows up as "starts efbfbd".
+  ["text", async (res) => Uint8Array.from(await res.text(), (ch) => ch.charCodeAt(0) & 0xff)]
+];
+
+let lastRead = "";
 const sizeFromUrl = async (url) => {
-  const read = async (range) => {
+  const attempts = [];
+  const hex = (b) => Array.from(b.subarray(0, 4)).map((x) => x.toString(16).padStart(2, "0")).join("");
+  const isImage = (b) => b.length > 12 && ((b[0] === 0xff && b[1] === 0xd8) || (b[0] === 0x89 && b[1] === 0x50) || (b[0] === 0x47 && b[1] === 0x49) || (b[0] === 0x52 && b[1] === 0x49));
+  const download = async (reader, range) => {
     const res = await fetch(url, range ? { headers: { Range: "bytes=0-131071" } } : {});
     if (!res.ok) throw new Error("image download returned " + res.status);
-    return new Uint8Array(await res.arrayBuffer());
+    return reader(res);
   };
-  return sizeFromBytes(await read(true)) || sizeFromBytes(await read(false));
+
+  for (const [name, reader] of BODY_READERS) {
+    let b = null;
+    try { b = await download(reader, true); }
+    catch (e) { if (/image download returned/.test(e.message)) throw e; attempts.push(name + ": " + e.message); continue; }
+    if (!b) { attempts.push(name + ": n/a"); continue; }
+    attempts.push(name + ": " + b.length + "B " + hex(b));
+    if (!isImage(b)) continue;
+    // This reader works. If a large metadata block pushed the size header
+    // past the first 128 KB, read the whole file the same way.
+    const size = sizeFromBytes(b) || sizeFromBytes(await download(reader, false));
+    lastRead = attempts.join("; ");
+    if (size) size.via = name;
+    return size;
+  }
+  lastRead = attempts.join("; ");
+  return null;
 };
 
 const orientationOf = (d) => {
@@ -173,6 +221,7 @@ try {
       });
     } else {
       let dimension = image.dimension;
+      let sizeError = "";
       if (!dimension) {
         // Kept in its own try so a failed asset lookup doesn't skip the
         // credit checks below.
@@ -184,21 +233,29 @@ try {
             image.url = asset.url || "";
             image.filename = image.filename || asset.filename || "";
           }
-          if (!dimension && image.url) dimension = await sizeFromUrl(image.url);
+          if (!dimension && image.url) {
+            dimension = await sizeFromUrl(image.url);
+            if (!dimension) sizeError = "no size found in the image file [" + lastRead + "]";
+          } else if (!dimension) {
+            sizeError = "the asset has no URL";
+          }
         } catch (e) {
-          image.filename = image.filename || e.message;
+          sizeError = e.message;
         }
       }
       const actual = orientationOf(dimension);
 
+      // A fail, not a warn: only fails are shown in the editor, and an
+      // orientation check that silently didn't run reads as a pass.
       if (!actual) {
         add({
           id: "featured_image.orientation_match",
           label: "Image orientation matches Media Orientation",
           field: path(F.image),
-          status: "warn",
-          message: "Couldn't read the image's dimensions" + (image.filename ? " (" + image.filename + ")" : "") + ".",
-          fix: "Make sure the featured image is an image file."
+          status: "fail",
+          found: (image.filename || image.uid) + (sizeError ? ": " + sizeError : ""),
+          message: "Couldn't read the image's size, so its orientation couldn't be checked.",
+          fix: "Make sure the featured image is a JPEG, PNG, GIF or WebP file. If it is, flag this to an admin."
         });
       } else {
         const ok = actual === wanted;
@@ -266,4 +323,4 @@ try {
   });
 }
 
-return { group: CAT, findings: findings };
+return { group: CAT, version: CODE_VERSION, findings: findings };
