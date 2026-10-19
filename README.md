@@ -114,11 +114,12 @@ config on the field instance when you add the Custom Field to a content type:
     "authors": ["credits.authors[].author"],
     "featured_images": ["featured_media.image"],
     "seos": ["seo"],
-    "sections_and_tags": ["taxonomy.sections", "taxonomy.topics"],
+    "sections_and_tags": [],
     "article_text": ["articlebody"]
   },
   "validation_watch_fields": {
-    "featured_images": ["featured_media.media_orientation", "featured_media.image_credit"]
+    "featured_images": ["featured_media.media_orientation", "featured_media.image_credit"],
+    "sections_and_tags": ["taxonomy.primary_section", "taxonomy.primary_topic"]
   }
 }
 ```
@@ -178,11 +179,14 @@ config on the field instance when you add the Custom Field to a content type:
   **not** required to be filled out for the category to run or display (step 7 below). Use it
   for fields the validation itself checks for emptiness — e.g. the featured image's
   `image_credit`: listing it under `validation_fields` would hide the whole category whenever
-  the credit is blank, which is the very error the check exists to report. A category still
-  needs at least one `validation_fields` path to count as configured.
+  the credit is blank, which is the very error the check exists to report. A category with
+  watch-only paths and no `validation_fields` at all is valid too, and always runs — use that
+  when the check is simply "these fields must be set" (e.g. Sections & Tags with
+  `taxonomy.primary_section` and `taxonomy.primary_topic`). A category needs at least one path
+  in either section to count as configured.
 
 If `statusUrl` is missing, or no category has both a valid `validation_urls` entry and at least
-one `validation_fields` path, the manual button shows an inline error instead of attempting a
+one `validation_fields` or `validation_watch_fields` path, the manual button shows an inline error instead of attempting a
 request.
 
 ## How it works
@@ -202,7 +206,7 @@ request.
    earlier) — no click required.
 5. **Manual trigger**: clicking the button (or `run_at_load`) fans out to every category that is
    actually set up in the config — i.e. has a valid `http(s)` URL under `validation_urls` **and**
-   at least one path under `validation_fields`. Each such category is `POST`ed the entry at its
+   at least one path under `validation_fields` or `validation_watch_fields`. Each such category is `POST`ed the entry at its
    *own* endpoint, in parallel, and marked pending individually; categories missing either
    piece are left entirely alone (no request, nothing pending, nothing shown). Then the shared
    polling loop picks up results as they land.
