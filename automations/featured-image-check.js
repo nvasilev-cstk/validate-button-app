@@ -23,7 +23,7 @@
 const CAT = "Featured Image";
 // Written into every report, so the stored feedback shows which version of
 // this code Automate actually ran. Bump it whenever the code changes.
-const CODE_VERSION = "2026-10-19.5";
+const CODE_VERSION = "2026-10-19.6";
 const CMA = "https://" + String(input.cma_host || "api.contentstack.io").replace(/^https?:\/\//, "").replace(/\/+$/, "") + "/v3";
 
 // Map to your real field UIDs.
@@ -183,6 +183,8 @@ const sizeFromUrl = async (url) => {
   return null;
 };
 
+const cap = (w) => w.charAt(0).toUpperCase() + w.slice(1);
+
 const orientationOf = (d) => {
   if (!d || !d.width || !d.height) return null;
   if (d.width > d.height) return "horizontal";
@@ -216,7 +218,7 @@ try {
         label: "Media orientation is chosen",
         field: path(F.orientation),
         status: "fail",
-        message: "Media Orientation is not set, so the image can't be checked against it.",
+        message: "Media Orientation isn't set, so the image's orientation can't be checked.",
         fix: "Set Media Orientation to Horizontal or Vertical."
       });
     } else {
@@ -253,8 +255,8 @@ try {
           label: "Image orientation matches Media Orientation",
           field: path(F.image),
           status: "fail",
-          found: (image.filename || image.uid) + (sizeError ? ": " + sizeError : ""),
-          message: "Couldn't read the image's size, so its orientation couldn't be checked.",
+          found: (image.filename || image.uid) + (sizeError ? " (" + sizeError + ")" : ""),
+          message: "The image's size couldn't be read, so its orientation wasn't checked.",
           fix: "Make sure the featured image is a JPEG, PNG, GIF or WebP file. If it is, flag this to an admin."
         });
       } else {
@@ -264,9 +266,9 @@ try {
           label: "Image orientation matches Media Orientation",
           field: path(F.image),
           status: ok ? "pass" : "fail",
-          found: ok ? "" : actual + " image (" + dimension.width + "×" + dimension.height + "), Media Orientation is " + wanted,
-          message: ok ? "" : "The image is " + actual + " but Media Orientation is set to " + wanted + ".",
-          fix: ok ? "" : "Choose a " + wanted + " image, or change Media Orientation to match."
+          found: ok ? "" : (image.filename ? image.filename + ", " : "") + dimension.width + " × " + dimension.height + " px",
+          message: ok ? "" : "The image is " + actual + ", but Media Orientation is set to " + cap(wanted) + ".",
+          fix: ok ? "" : "Choose a " + wanted + " image, or change Media Orientation to " + (actual === "square" ? "match" : cap(actual)) + "."
         });
       }
     }
@@ -281,7 +283,7 @@ try {
     field: path(F.credit),
     status: credit ? "pass" : "fail",
     message: credit ? "" : "The image credit is empty.",
-    fix: credit ? "" : "Add the photographer/agency credit for the featured image."
+    fix: credit ? "" : "Add the photographer and agency credit for the featured image."
   });
 
   // ── 3. image_credit follows TIME's format ──
@@ -308,8 +310,8 @@ try {
         field: path(F.credit),
         status: ok ? "pass" : "fail",
         found: ok ? "" : credit,
-        message: ok ? "" : (formatMessage || "The image credit doesn't match TIME's credit format."),
-        fix: ok ? "" : "Rewrite the credit to match TIME's format."
+        message: ok ? "" : (formatMessage || "The image credit isn't in TIME's credit format."),
+        fix: ok ? "" : "Rewrite the credit in TIME's format."
       });
     }
   }

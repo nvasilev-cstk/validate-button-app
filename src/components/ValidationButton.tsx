@@ -11,14 +11,22 @@ interface ValidationButtonProps {
 // any other informational status are filtered out before rendering (see
 // the errorFindings filter in ValidationButton below), so this only needs
 // to render the error case.
+//
+// A finding's `label` names the passing condition ("Headline is not a
+// placeholder"), which reads backwards on an error, so the row leads with
+// `message` — what's actually wrong — and only falls back to the label when
+// an automation didn't supply one. `found` is skipped when the message
+// already quotes it, to avoid saying the same value twice.
 function FindingRow({ finding }: { finding: ValidationFinding }) {
+  const message = finding.message?.trim();
+  const found = finding.found?.trim();
+  const showFound = Boolean(found) && !(message && message.includes(found!));
   return (
     <li className="cs-finding cs-finding--fail">
       <XCircle size={12} className="cs-finding__icon cs-finding__icon--fail" />
       <div className="cs-finding__body">
-        <span className="cs-finding__label">{finding.label || finding.id || 'Check'}</span>
-        {finding.message && <div className="cs-finding__detail">{finding.message}</div>}
-        {finding.found && (
+        <span className="cs-finding__label">{message || finding.label || finding.id || 'Check'}</span>
+        {showFound && (
           <div className="cs-finding__detail">
             <strong>Found:</strong> {finding.found}
           </div>
