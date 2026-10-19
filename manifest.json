@@ -40,6 +40,9 @@
                 "seos": [],
                 "sections_and_tags": [],
                 "article_text": []
+              },
+              "validation_watch_fields": {
+                "featured_images": []
               }
             }
           }

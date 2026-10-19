@@ -57,7 +57,11 @@ export interface ValidationConfig {
    * or wildcarded, rely on this one map.
    */
   fieldPathToCategory: Map<string, string>;
-  /** category key -> its configured field paths, for the "is this category filled out" check */
+  /**
+   * category key -> its required field paths (validation_fields only), for
+   * the "is this category filled out" check. Watch-only paths from
+   * validation_watch_fields are deliberately left out of this.
+   */
   categoryFieldPaths: Record<string, string[]>;
 }
 
@@ -108,6 +112,11 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
   const cfg = fieldConfig ?? {};
   const validationUrls = (cfg.validation_urls as Record<string, unknown> | undefined) ?? {};
   const validationFields = (cfg.validation_fields as Record<string, unknown> | undefined) ?? {};
+  // Optional, same keys as validation_fields. These paths re-trigger their
+  // category when edited but aren't required to be filled out — e.g. the
+  // featured image's credit: an empty credit is exactly what that check
+  // should report, so it can't be allowed to hide the category.
+  const validationWatchFields = (cfg.validation_watch_fields as Record<string, unknown> | undefined) ?? {};
 
   const categoryUrls: Record<string, string> = {};
   const fieldPathToCategory = new Map<string, string>();
@@ -128,6 +137,9 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
     const paths = normalizeFieldPathList(validationFields[def.fieldsConfigKey]);
     categoryFieldPaths[def.key] = paths;
     for (const path of paths) {
+      fieldPathToCategory.set(path, def.key);
+    }
+    for (const path of normalizeFieldPathList(validationWatchFields[def.fieldsConfigKey])) {
       fieldPathToCategory.set(path, def.key);
     }
   }

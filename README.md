@@ -116,6 +116,9 @@ config on the field instance when you add the Custom Field to a content type:
     "seos": ["seo"],
     "sections_and_tags": ["taxonomy.sections", "taxonomy.topics"],
     "article_text": ["articlebody"]
+  },
+  "validation_watch_fields": {
+    "featured_images": ["featured_media.media_orientation", "featured_media.image_credit"]
   }
 }
 ```
@@ -169,6 +172,14 @@ config on the field instance when you add the Custom Field to a content type:
     regardless of whether the host reuses unchanged sub-objects by reference.
   - A single comma-joined string in one array slot (e.g. `["a_uid, b_uid"]`) is also tolerated
     and split automatically, but prefer separate array elements.
+
+- **`validation_watch_fields`** — optional, same keys and path syntax as `validation_fields`.
+  These paths re-trigger their category when edited, exactly like `validation_fields`, but are
+  **not** required to be filled out for the category to run or display (step 7 below). Use it
+  for fields the validation itself checks for emptiness — e.g. the featured image's
+  `image_credit`: listing it under `validation_fields` would hide the whole category whenever
+  the credit is blank, which is the very error the check exists to report. A category still
+  needs at least one `validation_fields` path to count as configured.
 
 If `statusUrl` is missing, or no category has both a valid `validation_urls` entry and at least
 one `validation_fields` path, the manual button shows an inline error instead of attempting a
