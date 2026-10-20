@@ -203,6 +203,45 @@ export function useValidation(customField: CustomFieldLocation) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasSavedEntry]);
 
+  // Optional continuous background refresh (`refresh-poll-time` in the field
+  // config, seconds): re-fetches the validation report on a fixed interval
+  // for as long as the entry is open, whether or not anything is pending —
+  // so results written by something other than this app's own triggers (an
+  // automation run elsewhere, another editor's session) still show up
+  // without a reload. Separate from the pending poll in
+  // startPollingIfNeeded, which only runs after a trigger and gives up
+  // after MAX_POLL_ATTEMPTS; this one never gives up, which is why it has
+  // its own, higher floor (see MIN_REFRESH_POLL_TIME_MS).
+  //
+  // Safe to run alongside everything else: refreshFeedback only writes the
+  // `feedback` cache (and resolves any pending categories it finds results
+  // for), and the empty-field gate in the UI is applied independently of
+  // that cache, so a refresh can't resurrect a stale report for a category
+  // whose fields are empty. Requests are sequential (each waits for the
+  // previous to finish before the next interval starts, so a slow response
+  // can't pile up), and ticks are skipped while the tab is hidden.
+  useEffect(() => {
+    const intervalMs = config.refreshPollTimeMs;
+    if (!intervalMs || !hasSavedEntry) return;
+
+    let cancelled = false;
+
+    const loop = async () => {
+      while (!cancelled) {
+        await wait(intervalMs);
+        if (cancelled || !isMounted.current) return;
+        if (document.hidden) continue;
+        await refreshFeedback();
+      }
+    };
+
+    loop();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [config.refreshPollTimeMs, hasSavedEntry, refreshFeedback]);
+
   const startPollingIfNeeded = useCallback(() => {
     if (isPollingRef.current) return;
     isPollingRef.current = true;

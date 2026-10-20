@@ -22,6 +22,7 @@
               "api_key": "",
               "authorization": "",
               "refresh_rate": 5000,
+              "refresh-poll-time": 0,
               "run_at_load": "false",
               "validation_urls": {
                 "headline_check": "",

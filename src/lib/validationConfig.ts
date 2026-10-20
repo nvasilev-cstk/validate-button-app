@@ -28,6 +28,10 @@ export const DEFAULT_REFRESH_RATE_MS = 5_000;
 // Floor so a typo like `refresh_rate: 5` (meant as seconds) can't turn the
 // result poll into a request flood against the Management API.
 const MIN_REFRESH_RATE_MS = 500;
+// Floor for the continuous background refresh. Unlike refresh_rate this
+// loop runs for as long as the entry is open, and the Management API is
+// rate limited (~100 requests per window), so a tiny value is clamped up.
+const MIN_REFRESH_POLL_TIME_MS = 2_000;
 
 const HTTP_URL_PATTERN = /^https?:\/\/\S+$/i;
 
@@ -37,6 +41,13 @@ export interface ValidationConfig {
   authorization: string;
   /** How often (ms) to poll statusUrl for results while a validation is pending. */
   refreshRateMs: number;
+  /**
+   * Interval (ms) for continuously re-fetching the validation report in the
+   * background, whether or not a validation is pending — from the field
+   * config's `refresh-poll-time`, which is written in *seconds*. `null`
+   * means the option is off (not set, zero, or invalid).
+   */
+  refreshPollTimeMs: number | null;
   /** Run a full validation automatically when the app loads (for an already-saved entry). */
   runAtLoad: boolean;
   /**
@@ -107,6 +118,18 @@ function parseRefreshRate(raw: unknown): number {
   return Math.max(value, MIN_REFRESH_RATE_MS);
 }
 
+// `refresh-poll-time` is in seconds (unlike `refresh_rate`, which is ms).
+// Missing, zero, negative, or non-numeric turns the background refresh off;
+// positive values are converted to ms and clamped to a sane floor. The
+// underscore spelling is accepted too, since hand-edited JSON configs are
+// easy to get the separator wrong on.
+function parseRefreshPollTime(cfg: Record<string, unknown>): number | null {
+  const raw = cfg['refresh-poll-time'] ?? cfg.refresh_poll_time;
+  const seconds = typeof raw === 'string' ? Number(raw) : raw;
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return null;
+  return Math.max(seconds * 1000, MIN_REFRESH_POLL_TIME_MS);
+}
+
 // `run_at_load` is conventionally written as the string "true" in the field
 // config, but a real JSON boolean is accepted too. Anything else — missing,
 // "false", "yes", etc. — is off.
@@ -159,6 +182,7 @@ export function parseValidationConfig(fieldConfig: Record<string, unknown> | und
     apiKey: (cfg.api_key as string | undefined) ?? '',
     authorization: (cfg.authorization as string | undefined) ?? '',
     refreshRateMs: parseRefreshRate(cfg.refresh_rate),
+    refreshPollTimeMs: parseRefreshPollTime(cfg),
     runAtLoad: parseBooleanFlag(cfg.run_at_load),
     categoryUrls,
     fieldPathToCategory,

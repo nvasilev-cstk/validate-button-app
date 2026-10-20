@@ -98,6 +98,7 @@ config on the field instance when you add the Custom Field to a content type:
   "api_key": "your-stack-api-key",
   "authorization": "your-management-token-or-auth-token",
   "refresh_rate": 5000,
+  "refresh-poll-time": 30,
   "run_at_load": "true",
   "validation_urls": {
     "headline_check": "https://.../headline-check",
@@ -141,6 +142,18 @@ config on the field instance when you add the Custom Field to a content type:
   turn into a request flood). Note the poll gives up after 18 attempts per category, so the
   total time before a pending category times out is `refresh_rate × 18` — e.g. `3000` → ~54s,
   `5000` → ~90s.
+- **`refresh-poll-time`** — turns on a continuous background refresh: every this-many
+  **seconds** (note the unit — unlike `refresh_rate`, which is ms) the app re-fetches the
+  validation report from `statusUrl` for as long as the entry is open, whether or not anything
+  is pending. Optional; off when missing, `0`, negative, or non-numeric. A numeric string works,
+  `refresh_poll_time` (underscore) is accepted as an alias, and values below `2` are clamped up
+  to `2` — this loop never gives up, and the Management API is rate limited, so a tiny value
+  would burn through the quota. Use it so results written by something other than this app's
+  own triggers (an automation run elsewhere, another editor's session) show up without a
+  reload. It's separate from `refresh_rate`: that one only polls *after* a trigger and gives up
+  after 18 attempts; this one runs continuously. Requests never overlap (the next interval
+  starts only after the previous fetch finishes), ticks are skipped while the browser tab is
+  hidden, and it only starts once the entry is saved.
 - **`run_at_load`** — set to `"true"` to run a full validation automatically when the app loads,
   exactly as if the editor had clicked "Trigger Validation" (one `POST` per configured
   category to its own endpoint, with the same empty-field skipping, then polling). Optional; off by default. The string
