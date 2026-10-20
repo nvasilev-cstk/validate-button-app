@@ -20,10 +20,10 @@
 // (read from the asset `url`), or a /v3/assets lookup for a bare uid — which
 // serves both asset types — followed by one of the first two.
 
-const CAT = "Featured Image";
+const CAT = "Featured Media";
 // Written into every report, so the stored feedback shows which version of
 // this code Automate actually ran. Bump it whenever the code changes.
-const CODE_VERSION = "2026-10-19.6";
+const CODE_VERSION = "2026-10-20.1";
 const CMA = "https://" + String(input.cma_host || "api.contentstack.io").replace(/^https?:\/\//, "").replace(/\/+$/, "") + "/v3";
 
 // Map to your real field UIDs.
@@ -318,7 +318,7 @@ try {
 } catch (e) {
   add({
     id: "featured_image.group_error",
-    label: "Featured image checks",
+    label: "Featured media checks",
     status: "warn",
     message: "This group of checks could not run: " + e.message,
     fix: "Re-run the review. If it keeps happening, flag it to an admin."
